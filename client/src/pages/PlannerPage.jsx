@@ -1,381 +1,380 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Search, MapPin, Navigation, Clock, Plus, X, Loader2, Zap, Cloud, BarChart3, Brain, Truck, ArrowRight, GripVertical, Package, Route } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Search, MapPin, Plus, X, Loader2, Navigation, ChevronRight, Clock, Route as RouteIcon, ArrowRight, CornerDownRight, CornerUpRight, TrendingUp, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRoute } from '../context/RouteContext';
 import { optimizeRoute, optimizeMultiStop, geocodePlace, saveHistory } from '../services/api';
 import MapView from '../components/map/MapView';
 
-const PREFERENCES = [
-  { value: 'fastest', label: 'Fastest', icon: '⚡' },
-  { value: 'cheapest', label: 'Cheapest', icon: '💰' },
-  { value: 'scenic', label: 'Scenic', icon: '🌿' },
-  { value: 'avoid_tolls', label: 'No Tolls', icon: '🚫' },
-];
-
-/* ── Location Input with Real Geocoding ── */
-function LocationInput({ placeholder, value, onChange, icon: Icon, onClear }) {
+/* ── Location Input ── */
+function LocationInput({ placeholder, value, onChange, onClear, color = 'var(--blue)' }) {
   const [query, setQuery] = useState(value?.name || '');
   const [suggestions, setSuggestions] = useState([]);
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
-  const timerRef = useRef(null);
-  const wrapperRef = useRef(null);
+  const timer = useRef(null);
+  const ref = useRef(null);
 
+  useEffect(() => { if (value?.name && value.name !== query) setQuery(value.name); }, [value]);
   useEffect(() => {
-    if (value?.name && value.name !== query) setQuery(value.name);
-  }, [value]);
-
-  useEffect(() => {
-    const handler = (e) => { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setShow(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setShow(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
   }, []);
 
   const handleInput = (e) => {
-    const val = e.target.value;
-    setQuery(val);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (val.length >= 3) {
+    const v = e.target.value;
+    setQuery(v);
+    if (timer.current) clearTimeout(timer.current);
+    if (v.length >= 3) {
       setLoading(true);
-      timerRef.current = setTimeout(async () => {
+      timer.current = setTimeout(async () => {
         try {
-          const res = await geocodePlace(val);
+          const res = await geocodePlace(v);
           setSuggestions(res.data.results || []);
           setShow(true);
         } catch { setSuggestions([]); }
         setLoading(false);
-      }, 500);
-    } else {
-      setSuggestions([]);
-      setShow(false);
-    }
+      }, 400);
+    } else { setSuggestions([]); setShow(false); }
   };
 
-  const select = (s) => { setQuery(s.name); onChange(s); setShow(false); };
-
   return (
-    <div ref={wrapperRef} className="relative">
-      <div className="relative flex items-center">
-        <Icon className="absolute left-3 w-4 h-4 text-slate-400" />
-        <input type="text" className="input-glass pl-9 pr-8 text-sm" placeholder={placeholder}
-          value={query} onChange={handleInput} onFocus={() => suggestions.length > 0 && setShow(true)} />
-        {loading && <Loader2 className="absolute right-8 w-4 h-4 text-indigo-400 animate-spin" />}
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        <div style={{ position: 'absolute', left: 10, width: 10, height: 10, borderRadius: '50%', background: color }} />
+        <input className="input-field" style={{ paddingLeft: 28, paddingRight: value ? 56 : 12 }}
+          placeholder={placeholder} value={query} onChange={handleInput}
+          onFocus={() => suggestions.length > 0 && setShow(true)} />
+        {loading && <Loader2 style={{ position: 'absolute', right: value ? 32 : 10, width: 14, height: 14, color: 'var(--blue)', animation: 'spin 1s linear infinite' }} />}
         {value && onClear && (
-          <button onClick={() => { setQuery(''); onChange(null); onClear(); }}
-            className="absolute right-2 p-1 rounded-lg hover:bg-slate-700/50 text-slate-500 hover:text-slate-300">
-            <X className="w-3.5 h-3.5" />
+          <button onClick={() => { setQuery(''); onChange(null); if (onClear) onClear(); }}
+            style={{ position: 'absolute', right: 6, padding: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <X style={{ width: 14, height: 14 }} />
           </button>
         )}
       </div>
-      <AnimatePresence>
-        {show && suggestions.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-            className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg z-50 overflow-hidden shadow-xl">
-            {suggestions.map((s, i) => (
-              <button key={i} onClick={() => select(s)}
-                className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-indigo-500/10 transition-colors text-xs">
-                <MapPin className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span className="text-slate-200 truncate">{s.name}</span>
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {show && suggestions.length > 0 && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--panel)',
+          border: '1px solid var(--border)', borderRadius: 8, zIndex: 50, overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+          {suggestions.map((s, i) => (
+            <button key={i} onClick={() => { setQuery(s.name); onChange(s); setShow(false); }}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
+                background: 'none', border: 'none', borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
+                cursor: 'pointer', textAlign: 'left', color: 'var(--text)', fontSize: 12 }}>
+              <MapPin style={{ width: 14, height: 14, color: 'var(--text-muted)', flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Direction Step ── */
+function DirectionStep({ step, idx, isLast }) {
+  const getIcon = (type, modifier) => {
+    if (type === 'depart') return '🚗';
+    if (type === 'arrive') return '🏁';
+    if (type === 'turn' && modifier?.includes('left')) return '↰';
+    if (type === 'turn' && modifier?.includes('right')) return '↱';
+    if (type === 'roundabout') return '🔄';
+    if (type === 'fork') return '⑂';
+    return '→';
+  };
+  const fmtDist = (m) => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+
+  return (
+    <div style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: isLast ? 'none' : '1px solid var(--border)', fontSize: 12 }}>
+      <span style={{ width: 22, textAlign: 'center', fontSize: 14, flexShrink: 0 }}>
+        {getIcon(step.type, step.modifier)}
+      </span>
+      <div style={{ flex: 1 }}>
+        <div style={{ color: 'var(--text)', lineHeight: 1.4 }}>{step.instruction}</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
+          {fmtDist(step.distance)} · {step.remainingDistance != null ? `${fmtDist(step.remainingDistance)} left` : ''}
+        </div>
+      </div>
     </div>
   );
 }
 
 export default function PlannerPage() {
   const { state, dispatch } = useRoute();
-  const [mode, setMode] = useState('route'); // 'route' or 'delivery'
-  const [stops, setStops] = useState([]);
-  const [deliveryResult, setDeliveryResult] = useState(null);
-  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [stops, setStops] = useState([]); // Multi-stop
+  const [multiResult, setMultiResult] = useState(null);
+  const [multiLoading, setMultiLoading] = useState(false);
+  const [tab, setTab] = useState('routes'); // 'routes' | 'directions' | 'multi'
+  const [directionsRoute, setDirectionsRoute] = useState(null);
 
-  // ── Single Route Optimization ──
-  const handleOptimize = useCallback(async () => {
-    if (!state.source || !state.destination) return toast.error('Enter source & destination');
+  const isMultiStop = stops.length > 0;
+  const fmtDist = (m) => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+  const fmtTime = (s) => { const h = Math.floor(s / 3600); const m = Math.round((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m} min`; };
+
+  // ── Find Route (A → B) ──
+  const handleFindRoute = useCallback(async () => {
+    if (!state.source || !state.destination) return toast.error('Enter source and destination');
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      const res = await optimizeRoute({
-        source: state.source, destination: state.destination,
-        preference: state.preference, departureTime: state.departureTime,
-      });
+      const res = await optimizeRoute({ source: state.source, destination: state.destination, preference: state.preference });
       dispatch({ type: 'SET_RESULTS', payload: res.data });
-      toast.success(`${res.data.routes.length} routes found (${res.data.metadata?.dataSource || 'OSRM'})`);
-      try { await saveHistory({ source: state.source, destination: state.destination, preference: state.preference,
-        selectedRoute: res.data.routes[0], weatherCondition: res.data.weather?.condition, aiExplanation: res.data.explanation?.summary }); } catch {}
+      setDirectionsRoute(res.data.routes[0]); // Show best route directions
+      setTab('routes');
+      toast.success(`${res.data.routes.length} route${res.data.routes.length > 1 ? 's' : ''} found`);
+      try { await saveHistory({ source: state.source, destination: state.destination, preference: state.preference, selectedRoute: res.data.routes[0] }); } catch {}
     } catch (err) {
       dispatch({ type: 'SET_ERROR', payload: err.response?.data?.error || err.message });
-      toast.error(err.response?.data?.error || 'Failed to optimize');
+      toast.error(err.response?.data?.error || 'Failed to find routes');
     }
-  }, [state.source, state.destination, state.preference, state.departureTime, dispatch]);
+  }, [state.source, state.destination, state.preference, dispatch]);
 
-  // ── Multi-Stop Delivery Optimization ──
-  const handleDeliveryOptimize = useCallback(async () => {
+  // ── Optimize Multi-Stop ──
+  const handleMultiOptimize = useCallback(async () => {
     if (!state.source) return toast.error('Enter start location');
     if (!state.destination) return toast.error('Enter end location');
-    const validStops = stops.filter(s => s.lat && s.lon);
-    if (validStops.length === 0) return toast.error('Add at least 1 delivery stop');
-
-    setDeliveryLoading(true);
-    setDeliveryResult(null);
+    const valid = stops.filter(s => s.lat);
+    if (valid.length === 0) return toast.error('Add at least 1 intermediate stop');
+    setMultiLoading(true); setMultiResult(null);
     try {
-      const res = await optimizeMultiStop({
-        source: state.source, destination: state.destination, stops: validStops,
-      });
-      setDeliveryResult(res.data);
-      // Put the delivery route geometry on the map
+      const res = await optimizeMultiStop({ source: state.source, destination: state.destination, stops: valid });
+      setMultiResult(res.data);
       if (res.data.geometry) {
         dispatch({ type: 'SET_RESULTS', payload: {
           routes: [{ index: 0, distance: res.data.totalDistance, duration: res.data.totalDuration,
-            estimatedCost: Math.round((res.data.totalDistance / 1000) * 6.5), score: 0,
-            isBest: true, rank: 1, summary: 'Optimized Delivery Route', geometry: res.data.geometry,
-            adjustedDuration: res.data.totalDuration, roadTypes: { highway: 40, urban: 40, rural: 20 } }],
-          bestRouteIndex: 0, explanation: { summary: res.data.explanation?.summary || '', factors: [] },
-          weather: state.weather || { condition: 'Clear', temperature: 25 },
+            estimatedCost: Math.round(res.data.totalDistance / 1000 * 6.5), score: 0, isBest: true,
+            summary: 'Optimized Route', geometry: res.data.geometry, adjustedDuration: res.data.totalDuration,
+            directions: res.data.directions || [] }],
+          bestRouteIndex: 0, explanation: { summary: res.data.explanation?.summary || '' },
         }});
+        setDirectionsRoute({ directions: res.data.directions || [], distance: res.data.totalDistance, duration: res.data.totalDuration });
       }
-      toast.success(`Delivery route optimized! Saved ${(res.data.distanceSaved / 1000).toFixed(1)} km`);
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Optimization failed');
-    }
-    setDeliveryLoading(false);
+      setTab('multi');
+      toast.success(`Optimized! Saved ${fmtDist(res.data.distanceSaved)}`);
+    } catch (err) { toast.error(err.response?.data?.error || 'Optimization failed'); }
+    setMultiLoading(false);
   }, [state.source, state.destination, stops, dispatch]);
 
-  const addStop = () => { if (stops.length < 8) setStops([...stops, { name: '', lat: null, lon: null }]); };
-  const removeStop = (idx) => setStops(stops.filter((_, i) => i !== idx));
-  const updateStop = (idx, val) => { const ns = [...stops]; ns[idx] = val || { name: '', lat: null, lon: null }; setStops(ns); };
-
-  const formatDist = (m) => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
-  const formatTime = (s) => { const h = Math.floor(s / 3600); const m = Math.round((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m} min`; };
-
   return (
-    <div className="h-[calc(100vh-64px)] flex overflow-hidden">
-      {/* ── Left Panel ── */}
-      <div className="w-[380px] shrink-0 bg-slate-900/95 border-r border-slate-800 flex flex-col overflow-y-auto">
-        {/* Mode Toggle */}
-        <div className="p-3 border-b border-slate-800">
-          <div className="flex bg-slate-800 rounded-lg p-1">
-            <button onClick={() => { setMode('route'); setDeliveryResult(null); }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium transition-all
-              ${mode === 'route' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
-              <Route className="w-3.5 h-3.5" /> Route Mode
-            </button>
-            <button onClick={() => setMode('delivery')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium transition-all
-              ${mode === 'delivery' ? 'bg-emerald-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
-              <Truck className="w-3.5 h-3.5" /> Delivery Mode
-            </button>
-          </div>
-        </div>
+    <div style={{ height: 'calc(100vh - 48px)', display: 'flex', overflow: 'hidden' }}>
+      {/* ── LEFT PANEL ── */}
+      <div style={{ width: 360, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* Inputs */}
-        <div className="p-3 space-y-2 border-b border-slate-800">
-          <LocationInput placeholder={mode === 'delivery' ? 'Start location (warehouse/hub)...' : 'Source...'}
-            value={state.source} onChange={(v) => dispatch({ type: 'SET_SOURCE', payload: v })} icon={MapPin} />
-          
-          {/* Delivery Stops */}
-          {mode === 'delivery' && (
-            <div className="space-y-2">
-              {stops.map((stop, idx) => (
-                <div key={idx} className="flex items-center gap-1">
-                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold flex items-center justify-center shrink-0">
-                    {idx + 1}
-                  </span>
-                  <div className="flex-1">
-                    <LocationInput placeholder={`Delivery stop ${idx + 1}...`} value={stop.lat ? stop : null}
-                      onChange={(v) => updateStop(idx, v)} icon={Package} onClear={() => removeStop(idx)} />
-                  </div>
-                  <button onClick={() => removeStop(idx)} className="p-1 text-slate-500 hover:text-rose-400 transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
+        {/* Search Section */}
+        <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <LocationInput placeholder="Start location..." value={state.source}
+              onChange={(v) => dispatch({ type: 'SET_SOURCE', payload: v })} color="#34a853" />
+
+            {/* Multi-stop inputs */}
+            {stops.map((stop, i) => (
+              <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <LocationInput placeholder={`Stop ${i + 1}...`} value={stop.lat ? stop : null} color="#fbbc04"
+                    onChange={(v) => { const ns = [...stops]; ns[i] = v || { name: '', lat: null, lon: null }; setStops(ns); }}
+                    onClear={() => setStops(stops.filter((_, j) => j !== i))} />
                 </div>
-              ))}
-              {stops.length < 8 && (
-                <button onClick={addStop}
-                  className="w-full py-2 border border-dashed border-slate-700 rounded-lg text-xs text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 transition-all flex items-center justify-center gap-1">
-                  <Plus className="w-3.5 h-3.5" /> Add Delivery Stop
+              </div>
+            ))}
+
+            <LocationInput placeholder="Destination..." value={state.destination}
+              onChange={(v) => dispatch({ type: 'SET_DESTINATION', payload: v })} color="#ea4335" />
+          </div>
+
+          {/* Add Stop Button */}
+          <button onClick={() => { if (stops.length < 8) setStops([...stops, { name: '', lat: null, lon: null }]); }}
+            style={{ width: '100%', padding: '8px', marginTop: 8, background: 'none', border: '1px dashed var(--border)',
+              borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', gap: 4, transition: 'all 0.2s' }}
+            onMouseEnter={(e) => { e.target.style.borderColor = 'var(--blue)'; e.target.style.color = 'var(--blue)'; }}
+            onMouseLeave={(e) => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--text-muted)'; }}>
+            <Plus style={{ width: 14, height: 14 }} /> Add stop
+          </button>
+
+          {/* Preference Pills (for direct route) */}
+          {!isMultiStop && (
+            <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+              {[
+                { v: 'fastest', l: '⚡ Fastest' }, { v: 'cheapest', l: '💰 Cheapest' },
+                { v: 'scenic', l: '🌿 Scenic' }, { v: 'avoid_tolls', l: '🚫 No Tolls' },
+              ].map(p => (
+                <button key={p.v} onClick={() => dispatch({ type: 'SET_PREFERENCE', payload: p.v })}
+                  style={{ flex: 1, padding: '6px 4px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none',
+                    cursor: 'pointer', transition: 'all 0.2s',
+                    background: state.preference === p.v ? 'var(--blue-dim)' : 'var(--panel-alt)',
+                    color: state.preference === p.v ? 'var(--blue)' : 'var(--text-muted)' }}>
+                  {p.l}
                 </button>
-              )}
+              ))}
             </div>
           )}
 
-          <LocationInput placeholder={mode === 'delivery' ? 'Final destination...' : 'Destination...'}
-            value={state.destination} onChange={(v) => dispatch({ type: 'SET_DESTINATION', payload: v })} icon={Search} />
+          {/* Action Button */}
+          <div style={{ marginTop: 10 }}>
+            {isMultiStop ? (
+              <button className="btn-green" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={handleMultiOptimize} disabled={multiLoading || !state.source || !state.destination}>
+                {multiLoading ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Optimizing {stops.filter(s=>s.lat).length + 2} stops...</>
+                 : <><RouteIcon style={{ width: 14, height: 14 }} /> Optimize {stops.filter(s=>s.lat).length + 2}-Stop Route</>}
+              </button>
+            ) : (
+              <button className="btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={handleFindRoute} disabled={state.loading || !state.source || !state.destination}>
+                {state.loading ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Finding routes...</>
+                 : <><Navigation style={{ width: 14, height: 14 }} /> Find Route</>}
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Preferences (Route Mode only) */}
-        {mode === 'route' && (
-          <div className="p-3 border-b border-slate-800">
-            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-2">Preference</label>
-            <div className="grid grid-cols-4 gap-1">
-              {PREFERENCES.map(p => (
-                <button key={p.value} onClick={() => dispatch({ type: 'SET_PREFERENCE', payload: p.value })}
-                  className={`py-2 rounded-lg text-[11px] font-medium transition-all
-                  ${state.preference === p.value ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-slate-800/50 text-slate-400 border border-transparent hover:border-slate-700'}`}>
-                  {p.icon} {p.label}
-                </button>
-              ))}
-            </div>
+        {/* ── Results Tabs ── */}
+        {(state.routes.length > 0 || multiResult) && (
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+            {[
+              { id: 'routes', label: 'Routes' },
+              { id: 'directions', label: 'Directions' },
+              ...(multiResult ? [{ id: 'multi', label: 'Optimization' }] : []),
+            ].map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 500, border: 'none', background: 'none',
+                  cursor: 'pointer', borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
+                  color: tab === t.id ? 'var(--blue)' : 'var(--text-muted)', transition: 'all 0.2s' }}>
+                {t.label}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* Action Button */}
-        <div className="p-3 border-b border-slate-800">
-          {mode === 'route' ? (
-            <button onClick={handleOptimize} disabled={state.loading || !state.source || !state.destination}
-              className="btn-primary w-full text-sm flex items-center justify-center gap-2">
-              {state.loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Optimizing...</>
-               : <><Brain className="w-4 h-4" /> Find Optimal Route</>}
-            </button>
-          ) : (
-            <button onClick={handleDeliveryOptimize} disabled={deliveryLoading || !state.source || !state.destination || stops.filter(s => s.lat).length === 0}
-              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all
-                bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:shadow-lg hover:shadow-emerald-500/25 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-              {deliveryLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</>
-               : <><Truck className="w-4 h-4" /> Optimize Delivery Route</>}
-            </button>
-          )}
-        </div>
+        {/* ── Tab Content ── */}
+        <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
 
-        {/* ── Results Section ── */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          {/* Weather */}
-          {state.weather && state.routes.length > 0 && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/50 rounded-lg text-xs">
-              <Cloud className="w-4 h-4 text-cyan-400" />
-              <span className="text-slate-300">{state.weather.condition}</span>
-              <span className="text-slate-500">{state.weather.temperature}°C</span>
-            </div>
-          )}
-
-          {/* Route Results (Route Mode) */}
-          {mode === 'route' && state.routes.length > 0 && (
-            <>
+          {/* Routes Tab */}
+          {tab === 'routes' && state.routes.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {state.routes.map((route, idx) => (
-                <motion.div key={idx} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.08 }}
-                  onClick={() => dispatch({ type: 'SELECT_ROUTE', payload: route.index })}
-                  className={`p-3 rounded-lg cursor-pointer transition-all border
-                    ${state.selectedRouteIndex === route.index
-                      ? 'bg-indigo-500/10 border-indigo-500/30'
-                      : 'bg-slate-800/30 border-slate-800 hover:border-slate-700'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-slate-200">{route.summary || `Route ${idx + 1}`}</span>
+                <div key={idx} onClick={() => { dispatch({ type: 'SELECT_ROUTE', payload: route.index }); setDirectionsRoute(route); }}
+                  style={{ padding: 12, borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s',
+                    background: state.selectedRouteIndex === route.index ? 'var(--blue-dim)' : 'var(--panel-alt)',
+                    border: `1px solid ${state.selectedRouteIndex === route.index ? 'var(--blue)' : 'var(--border)'}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{route.summary || `Route ${idx + 1}`}</span>
                       {route.isBest && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                          ⚡ Best
-                        </span>
+                        <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                          background: 'var(--green-dim)', color: 'var(--green)' }}>Best</span>
                       )}
                     </div>
-                    <span className="text-[10px] font-mono text-slate-500">Score: {route.score}</span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div><div className="text-[10px] text-slate-500">Distance</div>
-                      <div className="text-sm font-semibold text-slate-200">{formatDist(route.distance)}</div></div>
-                    <div><div className="text-[10px] text-slate-500">Time</div>
-                      <div className="text-sm font-semibold text-slate-200">{formatTime(route.adjustedDuration || route.duration)}</div></div>
-                    <div><div className="text-[10px] text-slate-500">Cost</div>
-                      <div className="text-sm font-semibold text-slate-200">₹{route.estimatedCost}</div></div>
-                  </div>
-                  {route.roadTypes && (
-                    <div className="flex gap-px mt-2 h-1 rounded-full overflow-hidden">
-                      <div className="bg-indigo-500" style={{ width: `${route.roadTypes.highway}%` }} />
-                      <div className="bg-amber-500" style={{ width: `${route.roadTypes.urban}%` }} />
-                      <div className="bg-emerald-500" style={{ width: `${route.roadTypes.rural}%` }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Distance</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{fmtDist(route.distance)}</div>
                     </div>
-                  )}
-                </motion.div>
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Time</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{fmtTime(route.adjustedDuration || route.duration)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Cost</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>₹{route.estimatedCost}</div>
+                    </div>
+                  </div>
+                  {/* Click to see directions hint */}
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Navigation style={{ width: 10, height: 10 }} /> Click → tap "Directions" tab for turn-by-turn
+                  </div>
+                </div>
               ))}
 
               {/* AI Explanation */}
               {state.explanation?.summary && (
-                <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/15">
-                  <div className="text-[10px] uppercase tracking-wider text-indigo-400 font-medium mb-1.5 flex items-center gap-1">
-                    <Brain className="w-3 h-3" /> AI Analysis
+                <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)', marginTop: 4 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
+                    AI Analysis
                   </div>
-                  <p className="text-xs text-slate-300 leading-relaxed">{state.explanation.summary}</p>
-                  {state.explanation.factors?.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {state.explanation.factors.map((f, i) => (
-                        <div key={i} className="flex items-center justify-between text-[10px]">
-                          <span className="text-slate-400">{f.factor}</span>
-                          <span className={`px-1.5 py-0.5 rounded
-                            ${f.impact === 'high' ? 'bg-rose-500/15 text-rose-400' : f.impact === 'medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-700 text-slate-400'}`}>
-                            {f.impact}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>{state.explanation.summary}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Directions Tab — Google Maps style */}
+          {tab === 'directions' && directionsRoute?.directions && (
+            <div>
+              {/* Summary bar */}
+              <div style={{ padding: 10, borderRadius: 8, background: 'var(--blue-dim)', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{fmtTime(directionsRoute.duration)}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{fmtDist(directionsRoute.distance)}</div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  {directionsRoute.directions.length} steps<br />
+                  via {directionsRoute.summary || 'road'}
+                </div>
+              </div>
+
+              {/* Step-by-step directions */}
+              <div>
+                {directionsRoute.directions.map((step, i) => (
+                  <DirectionStep key={i} step={step} idx={i} isLast={i === directionsRoute.directions.length - 1} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Multi-Stop Optimization Tab */}
+          {tab === 'multi' && multiResult && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* Savings banner */}
+              {multiResult.distanceSaved > 0 && (
+                <div style={{ padding: 12, borderRadius: 8, background: 'var(--green-dim)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--green)' }}>
+                    Saved {fmtDist(multiResult.distanceSaved)}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
+                    {multiResult.improvement}% shorter · {fmtTime(multiResult.timeSaved)} faster · {multiResult.method}
+                  </div>
                 </div>
               )}
 
-              {/* Data source badge */}
-              <div className="text-center text-[10px] text-slate-600 py-1">
-                Data: OSRM (real road distances) • Map: OpenStreetMap
-              </div>
-            </>
-          )}
-
-          {/* Delivery Results */}
-          {mode === 'delivery' && deliveryResult && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-              {/* Summary Card */}
-              <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                <div className="text-[10px] uppercase tracking-wider text-emerald-400 font-medium mb-2">
-                  📦 Optimized Delivery Route
+              {/* Totals */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Total Distance</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmtDist(multiResult.totalDistance)}</div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-center">
-                  <div>
-                    <div className="text-[10px] text-slate-500">Total Distance</div>
-                    <div className="text-lg font-bold text-slate-100">{formatDist(deliveryResult.totalDistance)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-500">Total Time</div>
-                    <div className="text-lg font-bold text-slate-100">{formatTime(deliveryResult.totalDuration)}</div>
-                  </div>
+                <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Total Time</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmtTime(multiResult.totalDuration)}</div>
                 </div>
-
-                {deliveryResult.distanceSaved > 0 && (
-                  <div className="mt-3 p-2 rounded-lg bg-emerald-500/10 text-center">
-                    <div className="text-emerald-400 text-sm font-bold">
-                      🎉 Saved {formatDist(deliveryResult.distanceSaved)} ({deliveryResult.improvement}%)
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">
-                      vs. original order • {deliveryResult.method}
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {/* Stop Sequence Timeline */}
-              <div className="space-y-0">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-2 px-1">
-                  Optimized Stop Order
+              {/* Optimized Stop Order */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                  Optimized Visit Order
                 </div>
-                {deliveryResult.optimizedSequence?.map((stop, idx) => (
-                  <div key={idx} className="flex items-start gap-2 relative">
-                    {/* Timeline line */}
-                    {idx < deliveryResult.optimizedSequence.length - 1 && (
-                      <div className="absolute left-[9px] top-5 w-px h-full bg-slate-700" />
+                {multiResult.optimizedSequence?.map((stop, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, position: 'relative' }}>
+                    {/* Line connector */}
+                    {i < multiResult.optimizedSequence.length - 1 && (
+                      <div style={{ position: 'absolute', left: 9, top: 22, width: 2, height: 'calc(100% - 4px)',
+                        background: 'var(--border)' }} />
                     )}
-                    {/* Dot */}
-                    <div className={`w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-[9px] font-bold z-10
-                      ${stop.isStart ? 'bg-emerald-500 text-white' :
-                        stop.isEnd ? 'bg-rose-500 text-white' :
-                        'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
-                      {stop.isStart ? 'S' : stop.isEnd ? 'E' : stop.sequenceNumber - 1}
+                    {/* Circle */}
+                    <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, zIndex: 1,
+                      background: stop.isStart ? 'var(--green)' : stop.isEnd ? 'var(--red)' : 'var(--amber)',
+                      color: stop.isStart || stop.isEnd ? 'white' : '#1a1d27' }}>
+                      {stop.isStart ? 'S' : stop.isEnd ? 'E' : i}
                     </div>
-                    {/* Content */}
-                    <div className="flex-1 pb-3">
-                      <div className="text-xs font-medium text-slate-200 leading-tight">{stop.name}</div>
-                      {stop.distanceToNext > 0 && (
-                        <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-2">
-                          <span>→ {formatDist(stop.distanceToNext)}</span>
-                          <span>{formatTime(stop.durationToNext)}</span>
+                    {/* Text */}
+                    <div style={{ flex: 1, paddingBottom: 14 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)' }}>{stop.name?.split(',').slice(0, 2).join(',')}</div>
+                      {stop.distToNext > 0 && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                          ↓ {fmtDist(stop.distToNext)} · {fmtTime(stop.timeToNext)}
                         </div>
                       )}
                     </div>
@@ -383,81 +382,72 @@ export default function PlannerPage() {
                 ))}
               </div>
 
-              {/* Leg Breakdown */}
-              {deliveryResult.legs?.length > 0 && (
-                <div className="space-y-1">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium px-1">Leg Details</div>
-                  {deliveryResult.legs.map((leg, i) => (
-                    <div key={i} className="flex items-center justify-between px-2 py-1.5 bg-slate-800/30 rounded text-[11px]">
-                      <span className="text-slate-300 truncate flex-1">{leg.from.split(',')[0]} → {leg.to.split(',')[0]}</span>
-                      <span className="text-slate-400 ml-2 whitespace-nowrap">{formatDist(leg.distance)} • {formatTime(leg.duration)}</span>
+              {/* Algorithm Comparison */}
+              {multiResult.algorithmComparison && (
+                <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)' }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                    Algorithm Comparison
+                  </div>
+                  {[
+                    { label: 'Your order', val: multiResult.algorithmComparison.original, c: 'var(--text-muted)' },
+                    { label: 'Nearest Neighbor', val: multiResult.algorithmComparison.nearestNeighbor, c: 'var(--amber)' },
+                    { label: '2-opt Optimized', val: multiResult.algorithmComparison.twoOpt, c: 'var(--green)' },
+                    ...(multiResult.algorithmComparison.osrm ? [{ label: 'OSRM TSP', val: multiResult.algorithmComparison.osrm, c: 'var(--blue)' }] : []),
+                  ].map((a, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12 }}>
+                      <span style={{ color: a.c }}>{a.label}</span>
+                      <span style={{ color: 'var(--text-dim)' }}>{fmtDist(a.val.distance)} · {fmtTime(a.val.duration)}</span>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* Algorithm Comparison */}
-              {deliveryResult.algorithmComparison && (
-                <div className="p-3 rounded-lg bg-slate-800/30 border border-slate-800">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-2">Algorithm Comparison</div>
-                  <div className="space-y-1.5 text-[11px]">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Original order</span>
-                      <span className="text-slate-300">{formatDist(deliveryResult.algorithmComparison.original.distance)}</span>
+              {/* AI Explanation */}
+              {multiResult.explanation?.summary && (
+                <div style={{ padding: 10, borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--green)', marginBottom: 4 }}>🧠 Why this order?</div>
+                  <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>{multiResult.explanation.summary}</p>
+                  {multiResult.explanation.moves?.map((m, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', gap: 6 }}>
+                      <span style={{ color: 'var(--amber)' }}>→</span> <span>{m.stop}: {m.reason}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Nearest Neighbor</span>
-                      <span className="text-slate-300">{formatDist(deliveryResult.algorithmComparison.nearestNeighbor.distance)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">2-opt optimized</span>
-                      <span className="text-emerald-400 font-medium">{formatDist(deliveryResult.algorithmComparison.twoOpt.distance)}</span>
-                    </div>
-                    {deliveryResult.algorithmComparison.osrm && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">OSRM Trip API</span>
-                        <span className="text-indigo-400 font-medium">{formatDist(deliveryResult.algorithmComparison.osrm.distance)}</span>
-                      </div>
-                    )}
-                  </div>
+                  ))}
                 </div>
               )}
 
-              {/* Explanation */}
-              {deliveryResult.explanation && (
-                <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/15">
-                  <div className="text-[10px] uppercase tracking-wider text-emerald-400 font-medium mb-1.5">
-                    🧠 AI Explanation
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed">{deliveryResult.explanation.summary}</p>
-                  {deliveryResult.explanation.moves?.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {deliveryResult.explanation.moves.map((move, i) => (
-                        <div key={i} className="text-[10px] text-slate-400 flex items-start gap-1">
-                          <span className="text-amber-400">→</span>
-                          <span><strong className="text-slate-300">{move.stop.split(',')[0]}</strong>: {move.reason}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {/* View Directions button */}
+              {directionsRoute?.directions?.length > 0 && (
+                <button onClick={() => setTab('directions')}
+                  style={{ width: '100%', padding: 10, borderRadius: 8, background: 'var(--blue-dim)',
+                    border: '1px solid var(--blue)', color: 'var(--blue)', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <Navigation style={{ width: 14, height: 14 }} /> View Turn-by-Turn Directions
+                </button>
               )}
-            </motion.div>
+            </div>
           )}
+
+          {/* Empty state */}
+          {state.routes.length === 0 && !multiResult && !state.loading && !multiLoading && (
+            <div style={{ textAlign: 'center', paddingTop: 40 }}>
+              <Navigation style={{ width: 32, height: 32, color: 'var(--text-muted)', margin: '0 auto 12px' }} />
+              <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Enter locations to find routes</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                Add stops to optimize visiting order
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '6px 12px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>
+          Routes: OSRM · Maps: OpenStreetMap · Geocoding: Nominatim · All real data
         </div>
       </div>
 
-      {/* ── Map (Full remaining width) ── */}
-      <div className="flex-1 relative">
-        <MapView deliveryStops={mode === 'delivery' ? stops.filter(s => s.lat) : []}
-          deliveryResult={deliveryResult} />
-        {/* Mode indicator badge */}
-        <div className="absolute top-3 right-3 z-[500]">
-          <div className={`px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg backdrop-blur
-            ${mode === 'delivery' ? 'bg-emerald-500/90 text-white' : 'bg-indigo-500/90 text-white'}`}>
-            {mode === 'delivery' ? '📦 Delivery Mode' : '🗺️ Route Mode'}
-          </div>
-        </div>
+      {/* ── MAP ── */}
+      <div style={{ flex: 1, position: 'relative' }}>
+        <MapView stops={stops.filter(s => s.lat)} multiResult={multiResult} />
       </div>
     </div>
   );
