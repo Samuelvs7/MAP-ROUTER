@@ -94,11 +94,69 @@ body {
 }
 .leaflet-popup-tip { background: var(--panel) !important; }
 
-/* ── Skeleton ── */
+/* ── Animations ── */
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+@keyframes navPulse {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+@keyframes ctxMenuIn {
+  from { opacity: 0; transform: scale(0.92) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes pinDrop {
+  0% { transform: translateY(-20px) scale(1.2); opacity: 0; }
+  60% { transform: translateY(2px) scale(0.95); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
 .skeleton {
   background: linear-gradient(90deg, var(--panel) 25%, var(--panel-alt) 50%, var(--panel) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: 6px;
+}
+
+/* ── Map Floating Buttons ── */
+.map-floating-btn:hover {
+  background: rgba(26,29,39,1) !important;
+  border-color: rgba(66,133,244,0.3) !important;
+  color: #4285f4 !important;
+  transform: scale(1.05);
+}
+
+/* ── Context Menu ── */
+.map-context-menu button:active {
+  transform: scale(0.98);
+}
+
+/* ── Leaflet Overrides ── */
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+}
+.leaflet-control-zoom a {
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  font-size: 16px !important;
+}
+
+/* ── Disable default leaflet context menu ── */
+.leaflet-container {
+  cursor: crosshair !important;
+}
+.leaflet-dragging .leaflet-container {
+  cursor: grabbing !important;
+}
+.leaflet-marker-draggable {
+  cursor: grab !important;
+}
+
+/* ── Route line cursor ── */
+.leaflet-interactive {
+  cursor: pointer !important;
 }

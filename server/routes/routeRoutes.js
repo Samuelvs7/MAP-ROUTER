@@ -6,12 +6,13 @@ import { Router } from 'express';
 import { optimizeRoute } from '../ai/routeOptimizer.js';
 import { optimizeMultiStop } from '../ai/multiStopOptimizer.js';
 import { geocode, reverseGeocode } from '../services/geocodeService.js';
+import { getTrafficZones, refreshTraffic } from '../ai/trafficSimulator.js';
 
 const router = Router();
 
 /**
  * POST /api/routes/optimize
- * Single route optimization (A → B)
+ * Single route optimization (A → B) with preference support
  */
 router.post('/optimize', async (req, res, next) => {
   try {
@@ -25,6 +26,61 @@ router.post('/optimize', async (req, res, next) => {
     res.json(result);
   } catch (err) {
     console.error('Route optimize error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/routes/refresh
+ * Dynamic route refresh — recalculates with updated traffic
+ * Call this periodically (every 15-30 sec) for dynamic updates
+ */
+router.post('/refresh', async (req, res, next) => {
+  try {
+    const { source, destination, preference = 'fastest', departureTime } = req.body;
+
+    if (!source?.lat || !source?.lon || !destination?.lat || !destination?.lon) {
+      return res.status(400).json({ success: false, error: 'Source and destination with lat/lon are required' });
+    }
+
+    const result = await optimizeRoute({
+      source, destination, preference, departureTime,
+      isRefresh: true, // Forces traffic zone regeneration
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('Route refresh error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/routes/traffic-zones
+ * Returns current simulated traffic zones for map overlay
+ */
+router.get('/traffic-zones', async (req, res, next) => {
+  try {
+    const { sourceLat, sourceLon, destLat, destLon, refresh } = req.query;
+
+    if (!sourceLat || !sourceLon || !destLat || !destLon) {
+      return res.status(400).json({
+        success: false,
+        error: 'sourceLat, sourceLon, destLat, destLon query params required',
+      });
+    }
+
+    const zones = refresh === 'true'
+      ? refreshTraffic(parseFloat(sourceLat), parseFloat(sourceLon), parseFloat(destLat), parseFloat(destLon))
+      : getTrafficZones(parseFloat(sourceLat), parseFloat(sourceLon), parseFloat(destLat), parseFloat(destLon));
+
+    res.json({
+      success: true,
+      zones,
+      count: zones.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Traffic zones error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -14,6 +14,7 @@ const initialState = {
   explanation: null,
   weather: null,
   algorithmComparison: null,
+  trafficZones: [],
   loading: false,
   error: null,
 };
@@ -37,6 +38,7 @@ function routeReducer(state, action) {
       explanation: action.payload.explanation,
       weather: action.payload.weather,
       algorithmComparison: action.payload.algorithmComparison,
+      trafficZones: action.payload.trafficZones || [],
       loading: false,
       error: null,
     };
