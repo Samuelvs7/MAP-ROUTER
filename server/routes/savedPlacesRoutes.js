@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import SavedPlace from '../models/SavedPlace.js';
 
 const router = Router();
 const GUEST_USER_ID = 'guest';
+let memorySavedPlaces = [];
+
+function isDBConnected() {
+  return mongoose.connection.readyState === 1;
+}
 
 function resolveUserId(req) {
   const authHeader = req.headers.authorization;
@@ -28,13 +34,26 @@ function normalizeCoords(payload = {}) {
   };
 }
 
+function makeMemoryId() {
+  return `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
 router.get('/', async (req, res) => {
   try {
     const userId = resolveUserId(req);
-    const places = await SavedPlace.find({ userId }).sort({ createdAt: -1 });
-    res.json({ success: true, places });
+
+    if (isDBConnected()) {
+      const places = await SavedPlace.find({ userId }).sort({ createdAt: -1 });
+      return res.json({ success: true, places });
+    }
+
+    const places = memorySavedPlaces
+      .filter((item) => item.userId === userId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    return res.json({ success: true, places });
   } catch {
-    res.status(500).json({ success: false, error: 'Failed to fetch saved places' });
+    return res.status(500).json({ success: false, error: 'Failed to fetch saved places' });
   }
 });
 
@@ -48,7 +67,23 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Name, lat, and lon are required' });
     }
 
-    const place = await SavedPlace.create({
+    if (isDBConnected()) {
+      const place = await SavedPlace.create({
+        userId,
+        name,
+        lat,
+        lon,
+        lng: lon,
+        address: address || '',
+        category: category || 'favorite',
+        notes: notes || '',
+      });
+
+      return res.status(201).json({ success: true, place });
+    }
+
+    const place = {
+      _id: makeMemoryId(),
       userId,
       name,
       lat,
@@ -57,11 +92,17 @@ router.post('/', async (req, res) => {
       address: address || '',
       category: category || 'favorite',
       notes: notes || '',
-    });
+      createdAt: new Date(),
+    };
 
-    res.status(201).json({ success: true, place });
+    memorySavedPlaces.unshift(place);
+    if (memorySavedPlaces.length > 500) {
+      memorySavedPlaces = memorySavedPlaces.slice(0, 500);
+    }
+
+    return res.status(201).json({ success: true, place });
   } catch {
-    res.status(500).json({ success: false, error: 'Failed to save place' });
+    return res.status(500).json({ success: false, error: 'Failed to save place' });
   }
 });
 
@@ -77,28 +118,56 @@ router.put('/:id', async (req, res) => {
       updatePayload.lng = lon;
     }
 
-    const place = await SavedPlace.findOneAndUpdate(
-      { _id: req.params.id, userId },
-      updatePayload,
-      { new: true }
+    if (isDBConnected()) {
+      const place = await SavedPlace.findOneAndUpdate(
+        { _id: req.params.id, userId },
+        updatePayload,
+        { new: true },
+      );
+
+      if (!place) return res.status(404).json({ success: false, error: 'Place not found' });
+      return res.json({ success: true, place });
+    }
+
+    const idx = memorySavedPlaces.findIndex(
+      (item) => item._id === req.params.id && item.userId === userId,
     );
 
-    if (!place) return res.status(404).json({ success: false, error: 'Place not found' });
-    res.json({ success: true, place });
+    if (idx === -1) return res.status(404).json({ success: false, error: 'Place not found' });
+
+    memorySavedPlaces[idx] = {
+      ...memorySavedPlaces[idx],
+      ...updatePayload,
+    };
+
+    return res.json({ success: true, place: memorySavedPlaces[idx] });
   } catch {
-    res.status(500).json({ success: false, error: 'Failed to update place' });
+    return res.status(500).json({ success: false, error: 'Failed to update place' });
   }
 });
 
 router.delete('/:id', async (req, res) => {
   try {
     const userId = resolveUserId(req);
-    const result = await SavedPlace.findOneAndDelete({ _id: req.params.id, userId });
 
-    if (!result) return res.status(404).json({ success: false, error: 'Place not found' });
-    res.json({ success: true, message: 'Place deleted' });
+    if (isDBConnected()) {
+      const result = await SavedPlace.findOneAndDelete({ _id: req.params.id, userId });
+      if (!result) return res.status(404).json({ success: false, error: 'Place not found' });
+      return res.json({ success: true, message: 'Place deleted' });
+    }
+
+    const before = memorySavedPlaces.length;
+    memorySavedPlaces = memorySavedPlaces.filter(
+      (item) => !(item._id === req.params.id && item.userId === userId),
+    );
+
+    if (memorySavedPlaces.length === before) {
+      return res.status(404).json({ success: false, error: 'Place not found' });
+    }
+
+    return res.json({ success: true, message: 'Place deleted' });
   } catch {
-    res.status(500).json({ success: false, error: 'Failed to delete place' });
+    return res.status(500).json({ success: false, error: 'Failed to delete place' });
   }
 });
 

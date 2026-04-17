@@ -8,6 +8,7 @@
     "dev:watch": "node --watch index.js"
   },
   "dependencies": {
+    "@openrouter/sdk": "latest",
     "axios": "^1.7.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",

@@ -1,103 +1,253 @@
 import axios from 'axios';
+import { OpenRouter } from '@openrouter/sdk';
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const GEMINI_TIMEOUT_MS = 15000;
+const OPENROUTER_MODEL =
+  process.env.OPENROUTER_MODEL ||
+  process.env.GEMINI_MODEL ||
+  'qwen/qwen3-next-80b-a3b-instruct:free';
+const OPENROUTER_TIMEOUT_MS = 8000;
+const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1/chat/completions';
 
 const DEFAULT_SWITCH_MESSAGE = 'There is traffic ahead. A faster route is available. Shall I switch?';
 
-function extractText(responseData) {
-  const parts = responseData?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) return null;
-  const textPart = parts.find((part) => typeof part?.text === 'string');
-  return textPart?.text?.trim() || null;
+let openrouterClient = null;
+
+function getOpenRouterApiKey() {
+  return process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || null;
 }
 
-function getGeminiApiUrl() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.warn('[Gemini] No GEMINI_API_KEY set — using fallback responses');
-    return null;
+function getOpenRouterClient() {
+  const apiKey = getOpenRouterApiKey();
+  if (!apiKey) return null;
+
+  if (!openrouterClient) {
+    openrouterClient = new OpenRouter({ apiKey });
   }
-  return `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  return openrouterClient;
 }
 
-export async function testGeminiConnection() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return {
-      success: false,
-      model: GEMINI_MODEL,
-      error: 'GEMINI_API_KEY is not configured',
-    };
+function extractOpenRouterMessageText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (typeof part?.text === 'string') return part.text;
+        return '';
+      })
+      .join('');
   }
+  return '';
+}
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+function extractOpenRouterResultText(result) {
+  const content = result?.choices?.[0]?.message?.content;
+  const text = extractOpenRouterMessageText(content).trim();
+  return text || null;
+}
 
+async function withTimeout(promise, timeoutMs, label = 'request') {
+  let timer = null;
   try {
-    const response = await axios.post(
-      url,
-      {
-        contents: [{ parts: [{ text: 'Hello' }] }],
-      },
-      {
-        timeout: GEMINI_TIMEOUT_MS,
-        headers: { 'Content-Type': 'application/json' },
-      },
-    );
-
-    return {
-      success: true,
-      model: GEMINI_MODEL,
-      data: response.data,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      model: GEMINI_MODEL,
-      status: err.response?.status || 500,
-      error: err.response?.data?.error?.message || err.message,
-      details: err.response?.data || null,
-    };
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
-async function generateGeminiText(prompt, generationConfig = {}) {
-  const url = getGeminiApiUrl();
-  if (!url) return null;
 
-  try {
-    const response = await axios.post(
-      url,
+async function requestOpenRouterCompletion(prompt, generationConfig = {}) {
+  const client = getOpenRouterClient();
+  if (!client) return null;
+
+  const result = await withTimeout(
+    client.chat.send(
       {
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.35,
-          maxOutputTokens: 500,
-          ...generationConfig,
+        chatRequest: {
+          model: OPENROUTER_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: generationConfig.temperature ?? 0.35,
+          maxTokens: generationConfig.maxOutputTokens ?? 500,
+          stream: false,
         },
       },
       {
-        timeout: GEMINI_TIMEOUT_MS,
-        headers: { 'Content-Type': 'application/json' },
+        timeoutMs: OPENROUTER_TIMEOUT_MS,
       },
-    );
+    ),
+    OPENROUTER_TIMEOUT_MS + 1000,
+    'OpenRouter SDK request',
+  );
 
-    const text = extractText(response.data);
-    if (!text) {
-      console.warn('[Gemini] No text in response:', response.data?.candidates?.[0]?.finishReason);
-      return null;
+  return extractOpenRouterResultText(result);
+}
+
+// Mirrors the SDK pattern you shared (streaming response chunks).
+export async function streamOpenRouterToStdout(prompt = 'What is the meaning of life?') {
+  const client = getOpenRouterClient();
+  if (!client) return null;
+
+  const stream = await client.chat.send(
+    {
+      chatRequest: {
+        model: OPENROUTER_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+      },
+    },
+    {
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+    },
+  );
+
+  let combined = '';
+  for await (const chunk of stream) {
+    const content = chunk?.choices?.[0]?.delta?.content;
+    if (content) {
+      const normalized = extractOpenRouterMessageText(content);
+      combined += normalized;
+      process.stdout.write(normalized);
     }
-    return text.trim();
+  }
+
+  return combined.trim() || null;
+}
+
+export async function testGeminiConnection() {
+  const apiKey = getOpenRouterApiKey();
+  if (!apiKey) {
+    return {
+      success: false,
+      provider: 'openrouter',
+      model: OPENROUTER_MODEL,
+      error: 'OPENROUTER_API_KEY is not configured',
+    };
+  }
+
+  try {
+    const client = getOpenRouterClient();
+    if (!client) {
+      return {
+        success: false,
+        provider: 'openrouter',
+        model: OPENROUTER_MODEL,
+        error: 'OpenRouter client initialization failed',
+      };
+    }
+
+    const text = await requestOpenRouterCompletion('Hello', {
+      temperature: 0.1,
+      maxOutputTokens: 80,
+    });
+
+    return {
+      success: true,
+      provider: 'openrouter',
+      model: OPENROUTER_MODEL,
+      data: { text: text || 'Connected' },
+    };
   } catch (err) {
-    console.error('[Gemini] API error:', err.response?.status, err.response?.data?.error?.message || err.message);
-    return null;
+    try {
+      const response = await axios.post(
+        OPENROUTER_API_BASE,
+        {
+          model: OPENROUTER_MODEL,
+          messages: [{ role: 'user', content: 'Hello' }],
+          temperature: 0.1,
+          max_tokens: 80,
+        },
+        {
+          timeout: OPENROUTER_TIMEOUT_MS,
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      const content = response?.data?.choices?.[0]?.message?.content;
+      const text = extractOpenRouterMessageText(content).trim();
+
+      return {
+        success: true,
+        provider: 'openrouter',
+        model: OPENROUTER_MODEL,
+        data: { text: text || 'Connected' },
+      };
+    } catch (restErr) {
+      const fallbackErr = restErr || err;
+      return {
+        success: false,
+        provider: 'openrouter',
+        model: OPENROUTER_MODEL,
+        status: fallbackErr.response?.status || 500,
+        error:
+          fallbackErr.response?.data?.error?.message ||
+          fallbackErr.response?.data?.message ||
+          fallbackErr.message ||
+          'OpenRouter request failed',
+        details: fallbackErr.response?.data || null,
+      };
+    }
   }
 }
 
+async function generateGeminiText(prompt, generationConfig = {}) {
+  const apiKey = getOpenRouterApiKey();
+  if (!apiKey) {
+    console.warn('[OpenRouter] No OPENROUTER_API_KEY set - using fallback responses');
+    return null;
+  }
+
+  const client = getOpenRouterClient();
+  if (!client) return null;
+
+  try {
+    const text = await requestOpenRouterCompletion(prompt, generationConfig);
+    if (text) return text;
+  } catch (streamErr) {
+    // SDK streaming failed; fallback to HTTP completion.
+    try {
+      const response = await axios.post(
+        OPENROUTER_API_BASE,
+        {
+          model: OPENROUTER_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: generationConfig.temperature ?? 0.35,
+          max_tokens: generationConfig.maxOutputTokens ?? 500,
+        },
+        {
+          timeout: OPENROUTER_TIMEOUT_MS,
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      const content = response?.data?.choices?.[0]?.message?.content;
+      const text = extractOpenRouterMessageText(content).trim();
+      if (text) return text;
+    } catch (restErr) {
+      console.error(
+        '[OpenRouter] API error:',
+        restErr.response?.status,
+        restErr.response?.data?.error?.message || restErr.message,
+      );
+      return null;
+    }
+  }
+
+  return null;
+}
 // ─── NEW: Intelligent Analysis (ChatGPT-like response) ───
 export async function generateIntelligentAnalysis(context = {}) {
   const {
