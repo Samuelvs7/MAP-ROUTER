@@ -12,6 +12,10 @@ import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import routeRoutes from './routes/routeRoutes.js';
 import historyRoutes from './routes/historyRoutes.js';
+import aiRoutes from './routes/aiRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import savedPlacesRoutes from './routes/savedPlacesRoutes.js';
+import trafficRoutes from './routes/trafficRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 
 dotenv.config();
@@ -21,7 +25,7 @@ const PORT = process.env.PORT || 5000;
 
 // ── Middleware ──
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:3000'], credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
 
@@ -36,6 +40,10 @@ app.use('/api/', limiter);
 // ── Routes ──
 app.use('/api/routes', routeRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api', aiRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/saved', savedPlacesRoutes);
+app.use('/api/traffic', trafficRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

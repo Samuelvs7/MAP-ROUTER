@@ -115,6 +115,8 @@ export function scoreRoutes(routes, preference = 'fastest', weather = {}, depart
   const scores = routes.map((route, i) => {
     const roadScore = getRoadTypeScore(route.roadTypes || {}, preference);
     const tollPenalty = (preference === 'avoid_tolls' && route.hasTolls) ? 0.3 : 0;
+    const computedAdjustedDuration = Math.round(route.duration * trafficMult);
+    const computedTrafficLevel = trafficMult > 1.3 ? 'heavy' : trafficMult > 1.1 ? 'moderate' : 'light';
 
     const score = (
       weights.distance * normDist[i] +
@@ -129,8 +131,10 @@ export function scoreRoutes(routes, preference = 'fastest', weather = {}, depart
     return {
       ...route,
       score: Math.round(score * 1000) / 1000,
-      adjustedDuration: Math.round(route.duration * trafficMult),
-      trafficLevel: trafficMult > 1.3 ? 'heavy' : trafficMult > 1.1 ? 'moderate' : 'light',
+      adjustedDuration: Number.isFinite(Number(route.adjustedDuration))
+        ? Number(route.adjustedDuration)
+        : computedAdjustedDuration,
+      trafficLevel: route.trafficLevel || computedTrafficLevel,
       weatherImpact: weatherPenalty > 0.1 ? 'significant' : weatherPenalty > 0 ? 'minor' : 'none',
       // Feature breakdown for explainability
       scoreBreakdown: {

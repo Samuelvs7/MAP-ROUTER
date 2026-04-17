@@ -12,6 +12,7 @@ const initialState = {
   bestRouteIndex: null,
   selectedRouteIndex: null,
   explanation: null,
+  switchSuggestion: null,
   weather: null,
   algorithmComparison: null,
   trafficZones: [],
@@ -30,18 +31,35 @@ function routeReducer(state, action) {
     case 'SET_DEPARTURE': return { ...state, departureTime: action.payload };
     case 'SET_LOADING': return { ...state, loading: action.payload, error: null };
     case 'SET_ERROR': return { ...state, error: action.payload, loading: false };
-    case 'SET_RESULTS': return {
-      ...state,
-      routes: action.payload.routes,
-      bestRouteIndex: action.payload.bestRouteIndex,
-      selectedRouteIndex: action.payload.bestRouteIndex,
-      explanation: action.payload.explanation,
-      weather: action.payload.weather,
-      algorithmComparison: action.payload.algorithmComparison,
-      trafficZones: action.payload.trafficZones || [],
-      loading: false,
-      error: null,
-    };
+    case 'SET_RESULTS': {
+      const routes = action.payload.routes || [];
+      const bestRouteIndex = action.payload.bestRouteIndex ?? (routes[0]?.index ?? null);
+      const requestedSelected = action.payload.selectedRouteIndex;
+      const hasRequested = requestedSelected !== null && requestedSelected !== undefined;
+      const requestedExists = hasRequested && routes.some((route) => route.index === requestedSelected);
+      const previousExists = state.selectedRouteIndex !== null
+        && state.selectedRouteIndex !== undefined
+        && routes.some((route) => route.index === state.selectedRouteIndex);
+      const selectedRouteIndex = requestedExists
+        ? requestedSelected
+        : previousExists
+          ? state.selectedRouteIndex
+          : bestRouteIndex;
+
+      return {
+        ...state,
+        routes,
+        bestRouteIndex,
+        selectedRouteIndex,
+        explanation: action.payload.explanation,
+        switchSuggestion: action.payload.switchSuggestion || null,
+        weather: action.payload.weather,
+        algorithmComparison: action.payload.algorithmComparison,
+        trafficZones: action.payload.trafficZones || [],
+        loading: false,
+        error: null,
+      };
+    }
     case 'SELECT_ROUTE': return { ...state, selectedRouteIndex: action.payload };
     case 'RESET': return { ...initialState };
     default: return state;

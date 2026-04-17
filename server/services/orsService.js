@@ -152,6 +152,9 @@ async function getRoutesORS(sourceLat, sourceLon, destLat, destLon, preference =
     throw new Error('ORS: No routes found');
   }
 
+  // Decode geometry once for ORS maneuver location lookup
+  const allDecodedCoords = {};
+
   return response.data.routes.map((route, idx) => {
     const distance = Math.round(route.summary.distance);
     const duration = Math.round(route.summary.duration);
@@ -160,6 +163,9 @@ async function getRoutesORS(sourceLat, sourceLon, destLat, destLon, preference =
     const tollCost = (avgSpeed > 60 && !avoidFeatures.includes('tollways'))
       ? Math.round(distance / 1000 * 1.2)
       : 0;
+
+    // Decode polyline for maneuver location extraction
+    const decodedCoords = route.geometry ? decodePolyline(route.geometry) : [];
 
     // Full turn-by-turn directions
     const directions = [];
@@ -170,6 +176,14 @@ async function getRoutesORS(sourceLat, sourceLon, destLat, destLon, preference =
       for (const step of (segment.steps || [])) {
         cumDist += step.distance;
         cumTime += step.duration;
+
+        // ORS provides way_points indices that map into the decoded polyline
+        const wpIdx = step.way_points?.[0];
+        let maneuverLocation = null;
+        if (wpIdx != null && decodedCoords[wpIdx]) {
+          maneuverLocation = decodedCoords[wpIdx]; // [lon, lat]
+        }
+
         directions.push({
           instruction: step.instruction || formatORSInstruction(step),
           distance: Math.round(step.distance),
@@ -180,6 +194,7 @@ async function getRoutesORS(sourceLat, sourceLon, destLat, destLon, preference =
           remainingTime: Math.round(duration - cumTime),
           name: step.name || '',
           type: step.type || 0,
+          maneuverLocation,
         });
       }
     }
@@ -295,6 +310,7 @@ async function getRoutesOSRM(sourceLat, sourceLon, destLat, destLon) {
           name: step.name || '',
           type: step.maneuver?.type || 'continue',
           modifier: step.maneuver?.modifier || '',
+          maneuverLocation: step.maneuver?.location || null, // [lon, lat]
         });
       }
     }
@@ -434,6 +450,8 @@ export async function getOptimizedTrip(points) {
           duration: Math.round(step.duration),
           name: step.name || '',
           type: step.maneuver?.type || '',
+          modifier: step.maneuver?.modifier || '',
+          maneuverLocation: step.maneuver?.location || null, // [lon, lat]
           legIndex: legIdx,
         });
       }

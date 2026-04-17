@@ -1,732 +1,1097 @@
+/**
+ * MapView.jsx — MapLibre GL JS (WebGL, GPU-accelerated)
+ * Replaces react-leaflet with maplibre-gl for smooth 60fps rendering.
+ * All prior features preserved: routes, traffic, markers, right-click
+ * context menu, draggable pins, navigation, layers, camera tracking.
+ */
+
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup, CircleMarker, Circle, useMap, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { useRoute } from '../../context/RouteContext';
-
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
+import {
+  NavigationHeader,
+  NavigationFooter,
+  SpeedPanel,
+} from './NavigationOverlays';
 
 /* ══════════════════════════════════════════════
-   CUSTOM ICONS
+   TILE STYLES (MapLibre GL vector / raster)
    ══════════════════════════════════════════════ */
-function dot(color, label = '') {
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:${label?26:18}px;height:${label?26:18}px;border-radius:50% 50% 50% 0;
-      background:${color};transform:rotate(-45deg);border:2.5px solid #fff;
-      box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;">
-      <span style="transform:rotate(45deg);color:#fff;font-size:${label?11:0}px;font-weight:700;">${label}</span></div>`,
-    iconSize: [label?26:18, label?26:18],
-    iconAnchor: [label?13:9, label?26:18],
-    popupAnchor: [0, -26],
-  });
-}
-
-function navArrow(bearing = 0) {
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">
-      <div style="width:20px;height:20px;background:#4285f4;border-radius:50%;border:3px solid #fff;
-        box-shadow:0 0 12px rgba(66,133,244,0.6), 0 2px 8px rgba(0,0,0,0.4);position:relative;">
-        <div style="position:absolute;top:-8px;left:50%;transform:translateX(-50%) rotate(${bearing}deg);
-          width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
-          border-bottom:10px solid #4285f4;filter:drop-shadow(0 0 2px rgba(66,133,244,0.8));"></div>
-      </div>
-      <div style="position:absolute;width:36px;height:36px;border-radius:50%;border:2px solid rgba(66,133,244,0.3);
-        animation:navPulse 2s infinite;"></div>
-    </div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-  });
-}
-
-// Dropped pin icon (for click-on-map)
-function droppedPinIcon() {
-  return L.divIcon({
-    className: '',
-    html: `<div style="display:flex;flex-direction:column;align-items:center;">
-      <div style="width:28px;height:28px;border-radius:50% 50% 50% 0;background:#6366f1;
-        transform:rotate(-45deg);border:2.5px solid #fff;box-shadow:0 3px 12px rgba(99,102,241,0.5);
-        display:flex;align-items:center;justify-content:center;">
-        <span style="transform:rotate(45deg);font-size:12px;">📍</span>
-      </div>
-      <div style="width:2px;height:6px;background:rgba(99,102,241,0.4);margin-top:-2px;"></div>
-    </div>`,
-    iconSize: [28, 34],
-    iconAnchor: [14, 34],
-    popupAnchor: [0, -34],
-  });
-}
-
-// GPS user location icon
-function gpsIcon() {
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:18px;height:18px;background:#4285f4;border-radius:50%;border:3px solid #fff;
-      box-shadow:0 0 0 2px rgba(66,133,244,0.3), 0 0 16px rgba(66,133,244,0.4);"></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-  });
-}
-
-/* ══════════════════════════════════════════════
-   MAP TILE LAYERS
-   ══════════════════════════════════════════════ */
-const MAP_LAYERS = {
+const MAP_STYLES = {
   standard: {
-    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Maps',
-    label: '🗺️ Map',
+    label: 'Map',
+    style: {
+      version: 8,
+      sources: {
+        osm: {
+          type: 'raster',
+          tiles: ['https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'],
+          tileSize: 256,
+          attribution: '© Google Maps',
+          maxzoom: 19,
+        },
+      },
+      layers: [{ id: 'osm-tiles', type: 'raster', source: 'osm' }],
+    },
   },
   dark: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; OSM &copy; CARTO',
-    label: '🌙 Dark',
+    label: 'Dark',
+    style: {
+      version: 8,
+      sources: {
+        carto: {
+          type: 'raster',
+          tiles: [
+            'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+            'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+          ],
+          tileSize: 256,
+          attribution: '© OpenStreetMap © CARTO',
+          maxzoom: 19,
+        },
+      },
+      layers: [{ id: 'carto-dark', type: 'raster', source: 'carto' }],
+    },
   },
   satellite: {
-    url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Satellite',
-    label: '🛰️ Satellite',
+    label: 'Satellite',
+    style: {
+      version: 8,
+      sources: {
+        sat: {
+          type: 'raster',
+          tiles: ['https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'],
+          tileSize: 256,
+          attribution: '© Google Satellite',
+          maxzoom: 20,
+        },
+      },
+      layers: [{ id: 'sat-tiles', type: 'raster', source: 'sat' }],
+    },
   },
   hybrid: {
-    url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Hybrid',
-    label: '🏙️ Hybrid',
+    label: 'Hybrid',
+    style: {
+      version: 8,
+      sources: {
+        hyb: {
+          type: 'raster',
+          tiles: ['https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'],
+          tileSize: 256,
+          attribution: '© Google Hybrid',
+          maxzoom: 20,
+        },
+      },
+      layers: [{ id: 'hyb-tiles', type: 'raster', source: 'hyb' }],
+    },
   },
 };
 
-const COLORS = ['#34a853', '#4285f4', '#fbbc04', '#ea4335', '#8b5cf6'];
+const TRAFFIC_COLORS = {
+  heavy: '#ea4335',
+  moderate: '#fbbc04',
+  light: '#34a853',
+  clear: '#4285f4',
+};
+
+const VEHICLE_OPTIONS = [
+  { id: 'car', label: 'Car' },
+  { id: 'bike', label: 'Bike' },
+  { id: 'walk', label: 'Walk' },
+];
 
 /* ══════════════════════════════════════════════
-   MAP SUB-COMPONENTS
+   UTILITIES
    ══════════════════════════════════════════════ */
-function FitBounds({ bounds }) {
-  const map = useMap();
-  useEffect(() => {
-    if (bounds?.length >= 2) {
-      try { map.flyToBounds(bounds, { padding: [60, 60], maxZoom: 15, duration: 0.8 }); } catch {}
-    }
-  }, [JSON.stringify(bounds)]);
-  return null;
+function getDistanceKM(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function FollowMarker({ position, isFollowing }) {
-  const map = useMap();
-  useEffect(() => {
-    if (position && isFollowing) {
-      map.setView([position.lat, position.lon], 16, { animate: true, duration: 0.3 });
-    }
-  }, [position, isFollowing, map]);
-  return null;
+function coordsToGeoJSON(positions) {
+  // positions = [[lat,lon], ...]  → GeoJSON [[lon,lat], ...]
+  return positions.map(([lat, lon]) => [lon, lat]);
 }
 
-/* ── Map Click / Right-Click Handler ── */
-function MapInteractionHandler({ onMapClick, onMapRightClick, onMapInteract }) {
-  useMapEvents({
-    click(e) {
-      onMapClick(e.latlng);
-    },
-    contextmenu(e) {
-      e.originalEvent.preventDefault();
-      onMapRightClick(e.latlng, e.containerPoint);
-    },
-    dragstart() {
-      if (onMapInteract) onMapInteract();
-    },
-    zoomstart() {
-      if (onMapInteract) onMapInteract();
-    }
-  });
-  return null;
+function makePinHTML(color, label = '') {
+  return `
+    <div style="width:${label ? 28 : 18}px;height:${label ? 28 : 18}px;
+      border-radius:50% 50% 50% 0;background:${color};
+      transform:rotate(-45deg);border:2.5px solid #fff;
+      box-shadow:0 2px 8px rgba(0,0,0,0.5);
+      display:flex;align-items:center;justify-content:center;">
+      <span style="transform:rotate(45deg);color:#fff;
+        font-size:${label ? 11 : 0}px;font-weight:700;">${label}</span>
+    </div>`;
 }
 
-/* ── Context Menu Component ── */
-function ContextMenu({ position, latlng, address, loading, onDirectionsFrom, onDirectionsTo, onAddStop, onClose }) {
-  const map = useMap();
-  
-  useEffect(() => {
-    const handleClick = () => onClose();
-    const handleMove = () => onClose();
-    map.on('movestart', handleMove);
-    document.addEventListener('click', handleClick, { once: true, capture: true });
-    return () => {
-      map.off('movestart', handleMove);
-      document.removeEventListener('click', handleClick, { capture: true });
-    };
-  }, [map, onClose]);
+function makeNavVehicleHTML(bearing = 0) {
+  return `
+    <div style="width:52px;height:52px;display:flex;align-items:center;justify-content:center;position:relative;">
+      <svg width="40" height="40" viewBox="0 0 40 40"
+        style="transform:rotate(${bearing}deg);transition:transform 0.3s ease;
+        filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4)) drop-shadow(0 0 12px rgba(66,133,244,0.4));">
+        <defs>
+          <linearGradient id="navGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#5B9EF4"/>
+            <stop offset="100%" style="stop-color:#2A6FDB"/>
+          </linearGradient>
+        </defs>
+        <path d="M20 4 L32 30 L20 24 L8 30 Z" fill="url(#navGrad)"
+          stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+      </svg>
+      <div style="position:absolute;width:52px;height:52px;border-radius:50%;
+        border:2px solid rgba(66,133,244,0.25);animation:navPulse 2s infinite;"></div>
+    </div>`;
+}
 
-  if (!position) return null;
+function makeGPSHTML() {
+  return `<div style="width:18px;height:18px;background:#4285f4;border-radius:50%;
+    border:3px solid #fff;
+    box-shadow:0 0 0 2px rgba(66,133,244,0.3),0 0 16px rgba(66,133,244,0.4);"></div>`;
+}
 
-  const menuStyle = {
-    position: 'absolute',
-    left: position.x,
-    top: position.y,
-    zIndex: 1000,
-    background: 'rgba(26, 29, 39, 0.97)',
-    backdropFilter: 'blur(12px)',
-    border: '1px solid rgba(99,102,241,0.25)',
-    borderRadius: 12,
-    padding: '4px 0',
-    minWidth: 220,
-    boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset',
-    animation: 'ctxMenuIn 0.15s ease-out',
-  };
-
-  const itemStyle = {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-    fontSize: 13, color: '#e4e6ed', cursor: 'pointer', border: 'none',
-    background: 'none', width: '100%', textAlign: 'left', fontFamily: 'inherit',
-    transition: 'background 0.15s',
-  };
-
-  const coordStr = `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
-
-  return (
-    <div style={menuStyle} className="map-context-menu" onClick={(e) => e.stopPropagation()}>
-      {/* Address / Coords header */}
-      <div style={{ padding: '8px 14px 6px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: '#e4e6ed', lineHeight: 1.3, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {loading ? '⏳ Looking up...' : address || coordStr}
-        </div>
-        <div style={{ fontSize: 10, color: '#5c6078', marginTop: 2 }}>{coordStr}</div>
+function makeDroppedPinHTML() {
+  return `
+    <div style="display:flex;flex-direction:column;align-items:center;">
+      <div style="width:28px;height:28px;border-radius:50% 50% 50% 0;background:#6366f1;
+        transform:rotate(-45deg);border:2.5px solid #fff;
+        box-shadow:0 3px 12px rgba(99,102,241,0.5);
+        display:flex;align-items:center;justify-content:center;">
+        <span style="transform:rotate(45deg);font-size:10px;font-weight:700;color:#fff;">P</span>
       </div>
-
-      <button style={itemStyle} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(66,133,244,0.15)'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-        onClick={() => { onDirectionsFrom(); onClose(); }}>
-        <span style={{ fontSize: 16 }}>🟢</span> Directions from here
-      </button>
-
-      <button style={itemStyle} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(234,67,53,0.15)'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-        onClick={() => { onDirectionsTo(); onClose(); }}>
-        <span style={{ fontSize: 16 }}>🔴</span> Directions to here
-      </button>
-
-      <button style={itemStyle} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(251,188,4,0.15)'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-        onClick={() => { onAddStop(); onClose(); }}>
-        <span style={{ fontSize: 16 }}>🟡</span> Add as stop
-      </button>
-
-      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
-
-      <button style={{ ...itemStyle, fontSize: 12, color: '#8b8fa3' }}
-        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-        onClick={() => { navigator.clipboard.writeText(coordStr); onClose(); }}>
-        <span style={{ fontSize: 14 }}>📋</span> Copy coordinates
-      </button>
-    </div>
-  );
+      <div style="width:2px;height:6px;background:rgba(99,102,241,0.4);margin-top:-2px;"></div>
+    </div>`;
 }
 
-/* ── Locate Me Button ── */
-function LocateMeButton({ onLocate, locating }) {
+/* ══════════════════════════════════════════════
+   CONTROL BUTTON
+   ══════════════════════════════════════════════ */
+function ControlButton({ onClick, title, children, active = false, size = 50 }) {
   return (
     <button
-      onClick={onLocate}
-      className="map-floating-btn"
-      title="My Location"
+      type="button"
+      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      title={title}
       style={{
-        position: 'absolute', bottom: 100, right: 12, zIndex: 800,
-        width: 42, height: 42, borderRadius: '50%',
-        background: 'rgba(26,29,39,0.92)', backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        width: size, height: size, borderRadius: '50%',
+        border: active ? '1px solid rgba(66,133,244,0.45)' : '1px solid rgba(255,255,255,0.18)',
+        background: active ? 'rgba(66,133,244,0.18)' : 'rgba(255,255,255,0.94)',
+        boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
         cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'all 0.2s',
-        color: locating ? '#4285f4' : '#8b8fa3',
+        color: active ? '#1a73e8' : '#3c4043',
+        transition: 'all 0.2s ease', backdropFilter: 'blur(8px)',
+        pointerEvents: 'auto',
       }}
     >
-      {locating ? (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'spin 1s linear infinite' }}>
-          <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="20" />
-        </svg>
-      ) : (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
-          <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
-        </svg>
-      )}
+      {children}
     </button>
   );
 }
 
-/* ── Map Layer Switcher ── */
-function LayerSwitcher({ current, onChange }) {
-  const [open, setOpen] = useState(false);
-
+/* ══════════════════════════════════════════════
+   LAYER SIDE PANEL
+   ══════════════════════════════════════════════ */
+function LayerSidePanel({ open, currentLayer, onLayerChange, trafficEnabled, onToggleTraffic, onLocate, locating, isMobile }) {
+  if (!open) return null;
   return (
-    <div style={{ position: 'absolute', bottom: 152, right: 12, zIndex: 800 }}>
-      {open && (
-        <div style={{
-          position: 'absolute', bottom: 50, right: 0,
-          background: 'rgba(26,29,39,0.95)', backdropFilter: 'blur(12px)',
-          border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-          padding: 6, display: 'flex', flexDirection: 'column', gap: 2,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          animation: 'ctxMenuIn 0.15s ease-out', minWidth: 130,
-        }}>
-          {Object.entries(MAP_LAYERS).map(([key, layer]) => (
-            <button key={key} onClick={() => { onChange(key); setOpen(false); }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 12px', borderRadius: 8, border: 'none',
-                background: current === key ? 'rgba(66,133,244,0.15)' : 'none',
-                color: current === key ? '#4285f4' : '#e4e6ed',
-                fontSize: 12, fontWeight: current === key ? 600 : 400,
-                cursor: 'pointer', width: '100%', textAlign: 'left',
-                fontFamily: 'inherit', transition: 'background 0.15s',
-              }}
-              onMouseEnter={(e) => { if (current !== key) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-              onMouseLeave={(e) => { if (current !== key) e.currentTarget.style.background = 'none'; }}
-            >
-              {layer.label}
-            </button>
-          ))}
-        </div>
-      )}
-      <button
-        onClick={() => setOpen(!open)}
-        className="map-floating-btn"
-        title="Map layers"
+    <div style={{
+      position: 'absolute', top: isMobile ? '66%' : '64%', right: isMobile ? 84 : 102,
+      transform: 'translateY(-50%)', zIndex: 1110,
+      width: isMobile ? 192 : 220,
+      background: 'rgba(255,255,255,0.97)',
+      border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16,
+      boxShadow: '0 12px 30px rgba(0,0,0,0.2)', padding: 12,
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#5f6368', marginBottom: 8 }}>Map layers</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {Object.entries(MAP_STYLES).map(([key, val]) => (
+          <button key={key} onClick={() => onLayerChange(key)}
+            style={{
+              border: 'none', borderRadius: 10, padding: '10px 12px', textAlign: 'left',
+              cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+              fontWeight: currentLayer === key ? 700 : 500,
+              background: currentLayer === key ? '#e8f0fe' : '#f7f8f9',
+              color: currentLayer === key ? '#1a73e8' : '#3c4043',
+            }}>
+            {val.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ height: 1, background: 'rgba(0,0,0,0.08)', margin: '12px 2px' }} />
+
+      <button onClick={onToggleTraffic}
         style={{
-          width: 42, height: 42, borderRadius: '50%',
-          background: 'rgba(26,29,39,0.92)', backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'all 0.2s', color: '#8b8fa3',
-        }}
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <polygon points="12 2 22 8.5 12 15 2 8.5" /><polyline points="2 15.5 12 22 22 15.5" />
-        </svg>
+          width: '100%', border: 'none', borderRadius: 10, padding: '10px 12px',
+          textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+          fontWeight: 600, marginBottom: 8,
+          background: trafficEnabled ? '#e6f4ea' : '#f1f3f4',
+          color: trafficEnabled ? '#137333' : '#3c4043',
+        }}>
+        {trafficEnabled ? 'Traffic colors: ON' : 'Traffic colors: OFF'}
+      </button>
+
+      <button onClick={onLocate}
+        style={{
+          width: '100%', border: 'none', borderRadius: 10, padding: '10px 12px',
+          textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+          fontWeight: 600, background: '#f1f3f4',
+          color: locating ? '#1a73e8' : '#3c4043',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+        Use my location
+        <span style={{ fontSize: 11, fontWeight: 700 }}>{locating ? 'Locating...' : 'GPS'}</span>
       </button>
     </div>
   );
 }
 
-// ── Geospatial Haversine Utility ──
-function getDistanceKM(lat1, lon1, lat2, lon2) {
-  const R = 6371; // km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-            Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+/* ══════════════════════════════════════════════
+   RIGHT CONTROL STACK
+   ══════════════════════════════════════════════ */
+function RightControlStack({
+  isMobile, layersOpen, trafficEnabled, isFollowing, navigating,
+  onToggleLayers, onToggleTraffic, onRecenter, onZoomIn, onZoomOut,
+}) {
+  const size = isMobile ? 46 : 50;
+  const icon = isMobile ? 18 : 20;
+  return (
+    <div style={{
+      position: 'absolute', right: isMobile ? 12 : 20, top: isMobile ? '66%' : '64%',
+      transform: 'translateY(-50%)', zIndex: 1100,
+      display: 'flex', flexDirection: 'column', gap: isMobile ? 8 : 10,
+    }}>
+      <ControlButton onClick={onToggleLayers} title="Map layers" active={layersOpen} size={size}>
+        <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <polygon points="12 2 22 8.5 12 15 2 8.5" />
+          <polyline points="2 15.5 12 22 22 15.5" />
+        </svg>
+      </ControlButton>
+      <ControlButton onClick={onToggleTraffic} title={trafficEnabled ? 'Hide traffic' : 'Show traffic'} active={trafficEnabled} size={size}>
+        <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <path d="M4 18l5-8 4 5 3-3 4 6" />
+          <circle cx="7" cy="18" r="1.5" fill="currentColor" />
+          <circle cx="14" cy="15" r="1.5" fill="currentColor" />
+        </svg>
+      </ControlButton>
+      <ControlButton
+        onClick={onRecenter}
+        title={navigating ? (isFollowing ? 'Disable auto-follow' : 'Enable auto-follow') : 'Re-center'}
+        active={isFollowing}
+        size={size}
+      >
+        <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <circle cx="12" cy="12" r="3.5" />
+          <line x1="12" y1="2.5" x2="12" y2="5.5" />
+          <line x1="12" y1="18.5" x2="12" y2="21.5" />
+          <line x1="2.5" y1="12" x2="5.5" y2="12" />
+          <line x1="18.5" y1="12" x2="21.5" y2="12" />
+        </svg>
+      </ControlButton>
+      <ControlButton onClick={onZoomIn} title="Zoom in" size={size}>
+        <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </ControlButton>
+      <ControlButton onClick={onZoomOut} title="Zoom out" size={size}>
+        <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </ControlButton>
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════════
-   MAIN MAP VIEW COMPONENT
+   CONTEXT MENU
+   ══════════════════════════════════════════════ */
+function ContextMenu({ position, coords, address, loading, onDirectionsFrom, onDirectionsTo, onAddStop, onClose }) {
+  useEffect(() => {
+    const h = () => onClose();
+    const timer = setTimeout(() => document.addEventListener('click', h, { once: true }), 50);
+    return () => { clearTimeout(timer); document.removeEventListener('click', h); };
+  }, [onClose]);
+
+  if (!position) return null;
+
+  const coordStr = `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
+  const item = (label, accent, onClick) => (
+    <button
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+        fontSize: 13, color: '#e4e6ed', cursor: 'pointer', border: 'none',
+        background: 'none', width: '100%', textAlign: 'left', fontFamily: 'inherit',
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = `rgba(${accent},0.15)`}
+      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+      onClick={() => { onClick(); onClose(); }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div
+      style={{
+        position: 'absolute', left: position.x, top: position.y, zIndex: 2000,
+        background: 'rgba(26,29,39,0.97)', backdropFilter: 'blur(12px)',
+        border: '1px solid rgba(99,102,241,0.25)', borderRadius: 12,
+        padding: '4px 0', minWidth: 220,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        animation: 'ctxMenuIn 0.15s ease-out',
+      }}
+      onClick={e => e.stopPropagation()}
+    >
+      <div style={{ padding: '8px 14px 6px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#e4e6ed', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {loading ? 'Loading location...' : address || coordStr}
+        </div>
+        <div style={{ fontSize: 10, color: '#5c6078', marginTop: 2 }}>{coordStr}</div>
+      </div>
+      {item(<><span style={{ fontSize: 12, fontWeight: 700, color: '#34a853' }}>FROM</span>&nbsp;Directions from here</>, '52,168,83', onDirectionsFrom)}
+      {item(<><span style={{ fontSize: 12, fontWeight: 700, color: '#ea4335' }}>TO</span>&nbsp;Directions to here</>, '234,67,53', onDirectionsTo)}
+      {item(<><span style={{ fontSize: 12, fontWeight: 700, color: '#fbbc04' }}>STOP</span>&nbsp;Add as stop</>, '251,188,4', onAddStop)}
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+      {item(
+        <><span style={{ fontSize: 12, fontWeight: 700 }}>COPY</span>&nbsp;Copy coordinates</>,
+        '255,255,255',
+        () => navigator.clipboard.writeText(coordStr)
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   DROPPED PIN TOOLTIP
+   ══════════════════════════════════════════════ */
+function DroppedPinTooltip({ lat, lon, x, y, onFrom, onTo, onStop, onClose }) {
+  const [addr, setAddr] = useState('');
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(`/api/routes/reverse-geocode?lat=${lat}&lon=${lon}`);
+        const d = await r.json();
+        setAddr(d.result?.name || `${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+      } catch {
+        setAddr(`${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+      }
+    })();
+  }, [lat, lon]);
+
+  const btn = (label, bg, color, onClick) => (
+    <button onClick={() => { onClick(); onClose(); }}
+      style={{
+        padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+        fontSize: 11, fontWeight: 600, fontFamily: 'inherit', flex: 1,
+        background: bg, color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div style={{
+      position: 'absolute', left: x, top: y, transform: 'translate(-50%, -100%) translateY(-12px)',
+      zIndex: 1900, background: 'rgba(26,29,39,0.97)', border: '1px solid rgba(99,102,241,0.25)',
+      borderRadius: 12, padding: 12, minWidth: 200,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)', backdropFilter: 'blur(12px)',
+      animation: 'ctxMenuIn 0.12s ease-out',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#e4e6ed', marginBottom: 2, lineHeight: 1.3 }}>
+        {addr || 'Loading...'}
+      </div>
+      <div style={{ fontSize: 10, color: '#5c6078', marginBottom: 8 }}>{lat.toFixed(5)}, {lon.toFixed(5)}</div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {btn('From', 'rgba(52,168,83,0.2)', '#34a853', onFrom)}
+        {btn('To', 'rgba(234,67,53,0.2)', '#ea4335', onTo)}
+        {btn('Stop', 'rgba(251,188,4,0.2)', '#fbbc04', onStop)}
+      </div>
+      <button onClick={onClose}
+        style={{ position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', color: '#5c6078', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   MAIN MAP VIEW
    ══════════════════════════════════════════════ */
 export default function MapView({
   stops = [], multiResult, navPosition, navigating,
   onMapSetSource, onMapSetDestination, onMapAddStop,
   onDragSource, onDragDestination, onDragStop,
-  userLocation,
+  userLocation, poiResults = []
 }) {
   const { state, dispatch } = useRoute();
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef({});      // key → maplibregl.Marker
+  const popupRef = useRef(null);       // active popup
+  const dragStateRef = useRef({});     // track drag info per marker
+
   const [mapLayer, setMapLayer] = useState('standard');
   const [locating, setLocating] = useState(false);
-  const [droppedPin, setDroppedPin] = useState(null);
-  const [contextMenu, setContextMenu] = useState(null);
-  const [ctxAddress, setCtxAddress] = useState('');
-  const [ctxLoading, setCtxLoading] = useState(false);
-  const mapRef = useRef(null);
-
-  // ── Pro Navigation State ──
+  const [showLayerPanel, setShowLayerPanel] = useState(false);
+  const [trafficEnabled, setTrafficEnabled] = useState(true);
   const [isFollowing, setIsFollowing] = useState(true);
-  const [is3DMode, setIs3DMode] = useState(true);
+  const [vehicleType, setVehicleType] = useState('car');
+  const [contextMenu, setContextMenu] = useState(null);   // { x, y, lat, lng, address, loading }
+  const [droppedPin, setDroppedPin] = useState(null);     // { lat, lon, x, y }
+  const prevBearingRef = useRef(0);
+  const lastCameraRef = useRef(0);
 
-  // Auto-reset navigation features when it starts/stops
+  const isMobile = useMemo(() => typeof window !== 'undefined' && (window.innerWidth < 768 || navigator.hardwareConcurrency <= 4), []);
+
+  // ── Reset follow on navigation start ──
+  useEffect(() => { if (navigating) setIsFollowing(true); }, [navigating]);
+
+  /* ══════════════════════════════════════════════
+     INIT MAP — once on mount
+     ══════════════════════════════════════════════ */
   useEffect(() => {
-    if (navigating) {
-      setIsFollowing(true);
-      setIs3DMode(true);
-    }
-  }, [navigating]);
+    if (!mapContainerRef.current || mapRef.current) return;
 
-  // ── Compute bounds ──
-  const allBounds = useMemo(() => {
-    const pts = [];
-    if (state.source) pts.push([state.source.lat, state.source.lon]);
-    if (state.destination) pts.push([state.destination.lat, state.destination.lon]);
-    stops.forEach(s => pts.push([s.lat, s.lon]));
-    state.routes.forEach(r => {
-      if (r.geometry?.coordinates) r.geometry.coordinates.forEach(c => pts.push([c[1], c[0]]));
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: MAP_STYLES.standard.style,
+      center: [78.9629, 20.5937],   // [lon, lat] India centre
+      zoom: 5,
+      attributionControl: false,
+      // ── 🔥 SMOOTHNESS PHYSICS ──
+      dragPan: {
+        inertia: 1200,
+        deceleration: 2500,
+        linearity: 0.2,
+        maxSpeed: 1400,
+        deceleration: 2500,
+      },
+      pitchWithRotate: false,
+      dragRotate: false,
+      fadeDuration: 300,
+      zoomSnap: 0,              // 🔥 continuous zoom (no snapping)
+      scrollZoom: {
+        speed: 0.02,
+        smooth: true,
+      },
     });
-    return pts.length >= 2 ? pts : null;
-  }, [state.source, state.destination, state.routes, stops]);
 
-  // ── Traffic Segmentation Logic ──
-  const segmentedRoutes = useMemo(() => {
-    if (!state.routes.length) return [];
-    
-    return state.routes.map(r => {
-      if (!r.geometry?.coordinates) return { ...r, segments: [] };
-      const coords = r.geometry.coordinates.map(c => [c[1], c[0]]); // [lat, lon]
-      
-      // If not the selected route, just return one grey segment
-      if (r.index !== state.selectedRouteIndex) {
-        return { ...r, segments: [{ pos: coords, color: '#666' }] };
+    mapRef.current = map;
+
+    map.on('load', () => {
+      // ── Add empty GeoJSON sources for routes ──
+      map.addSource('routes', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addSource('completed-path', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addSource('turn-highlight', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // ── Unselected route layer ──
+      map.addLayer({
+        id: 'route-unselected',
+        type: 'line',
+        source: 'routes',
+        filter: ['==', ['get', 'selected'], false],
+        paint: {
+          'line-color': '#9aa0a6',
+          'line-width': 6,
+          'line-opacity': 0.5,
+          'line-dasharray': [2, 2],
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+
+      // ── Selected route — border glow ──
+      map.addLayer({
+        id: 'route-selected-glow',
+        type: 'line',
+        source: 'routes',
+        filter: ['all', ['==', ['get', 'selected'], true], ['==', ['get', 'completed'], false]],
+        paint: {
+          'line-color': '#1a73e8',
+          'line-width': 18,
+          'line-opacity': 0.3,
+          'line-blur': 4,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+
+      // ── Selected route — white base ──
+      map.addLayer({
+        id: 'route-selected-white',
+        type: 'line',
+        source: 'routes',
+        filter: ['all', ['==', ['get', 'selected'], true], ['==', ['get', 'completed'], false]],
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 14,
+          'line-opacity': 1,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+
+      // ── Selected route — traffic colour core ──
+      map.addLayer({
+        id: 'route-selected-core',
+        type: 'line',
+        source: 'routes',
+        filter: ['all', ['==', ['get', 'selected'], true], ['==', ['get', 'completed'], false]],
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 10,
+          'line-opacity': 0.95,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+
+      // ── Completed path (faded) ──
+      map.addLayer({
+        id: 'completed-path-layer',
+        type: 'line',
+        source: 'completed-path',
+        paint: {
+          'line-color': '#7BAAF7',
+          'line-width': 8,
+          'line-opacity': 0.3,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+
+      // ── Turn highlight ──
+      map.addLayer({
+        id: 'turn-highlight-glow',
+        type: 'line',
+        source: 'turn-highlight',
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 14,
+          'line-opacity': 0.3,
+          'line-blur': 3,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+      map.addLayer({
+        id: 'turn-highlight-core',
+        type: 'line',
+        source: 'turn-highlight',
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 8,
+          'line-opacity': 0.9,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+
+      // ── Click handler ──
+      map.on('click', (e) => {
+        setShowLayerPanel(false);
+        setContextMenu(null);
+        const pt = { lat: e.lngLat.lat, lon: e.lngLat.lng };
+        const pixel = e.point;
+        setDroppedPin({ ...pt, x: pixel.x, y: pixel.y });
+      });
+
+      // ── Right-click / context menu ──
+      map.on('contextmenu', async (e) => {
+        e.preventDefault?.();
+        setDroppedPin(null);
+        setShowLayerPanel(false);
+        const { lat, lng } = e.lngLat;
+        const pixel = e.point;
+
+        setContextMenu({ x: pixel.x, y: pixel.y, lat, lng, address: '', loading: true });
+
+        try {
+          const r = await fetch(`/api/routes/reverse-geocode?lat=${lat}&lon=${lng}`);
+          const d = await r.json();
+          setContextMenu(prev => prev ? { ...prev, address: d.result?.name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`, loading: false } : null);
+        } catch {
+          setContextMenu(prev => prev ? { ...prev, address: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, loading: false } : null);
+        }
+      });
+
+      // ── Drag → stop following ──
+      map.on('dragstart', () => {
+        setShowLayerPanel(false);
+        setIsFollowing(false);
+      });
+
+      // ── Route line click ──
+      ['route-unselected', 'route-selected-core', 'route-selected-white'].forEach(layer => {
+        map.on('click', layer, (e) => {
+          const props = e.features?.[0]?.properties;
+          if (props && props.routeIndex != null) {
+            dispatch({ type: 'SELECT_ROUTE', payload: props.routeIndex });
+            e.stopPropagation?.();
+          }
+        });
+        map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
+      });
+    });
+
+    return () => {
+      // clean up all markers
+      Object.values(markersRef.current).forEach(m => m.remove());
+      markersRef.current = {};
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ══════════════════════════════════════════════
+     LAYER SWITCH
+     ══════════════════════════════════════════════ */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    map.setStyle(MAP_STYLES[mapLayer]?.style || MAP_STYLES.standard.style);
+    // Re-add sources/layers after style change
+    map.once('styledata', () => {
+      const addIfMissing = (id, config) => { if (!map.getSource(id)) map.addSource(id, config); };
+      addIfMissing('routes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      addIfMissing('completed-path', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      addIfMissing('turn-highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+      const addLayerIfMissing = (layerConfig) => { if (!map.getLayer(layerConfig.id)) map.addLayer(layerConfig); };
+      addLayerIfMissing({ id: 'route-unselected', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], paint: { 'line-color': '#9aa0a6', 'line-width': 6, 'line-opacity': 0.5, 'line-dasharray': [2, 2] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      addLayerIfMissing({ id: 'route-selected-glow', type: 'line', source: 'routes', filter: ['all', ['==', ['get', 'selected'], true], ['==', ['get', 'completed'], false]], paint: { 'line-color': '#1a73e8', 'line-width': 18, 'line-opacity': 0.3, 'line-blur': 4 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      addLayerIfMissing({ id: 'route-selected-white', type: 'line', source: 'routes', filter: ['all', ['==', ['get', 'selected'], true], ['==', ['get', 'completed'], false]], paint: { 'line-color': '#ffffff', 'line-width': 14, 'line-opacity': 1 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      addLayerIfMissing({ id: 'route-selected-core', type: 'line', source: 'routes', filter: ['all', ['==', ['get', 'selected'], true], ['==', ['get', 'completed'], false]], paint: { 'line-color': ['get', 'color'], 'line-width': 10, 'line-opacity': 0.95 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      addLayerIfMissing({ id: 'completed-path-layer', type: 'line', source: 'completed-path', paint: { 'line-color': '#7BAAF7', 'line-width': 8, 'line-opacity': 0.3 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      addLayerIfMissing({ id: 'turn-highlight-glow', type: 'line', source: 'turn-highlight', paint: { 'line-color': '#ffffff', 'line-width': 14, 'line-opacity': 0.3, 'line-blur': 3 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      addLayerIfMissing({ id: 'turn-highlight-core', type: 'line', source: 'turn-highlight', paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.9 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+    });
+  }, [mapLayer]);
+
+  /* ══════════════════════════════════════════════
+     ROUTE LINES — update GeoJSON source
+     ══════════════════════════════════════════════ */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    if (!map.getSource('routes')) return;
+
+    const features = [];
+
+    state.routes.forEach(route => {
+      if (!route.geometry?.coordinates) return;
+      const coords = route.geometry.coordinates; // [[lon,lat],...]
+      const selected = route.index === state.selectedRouteIndex;
+
+      if (!selected) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: { selected: false, completed: false, color: '#9aa0a6', routeIndex: route.index },
+        });
+        return;
       }
 
-      // Selected Route: Segment it based on traffic zones
+      // Traffic segmentation for selected route
       const zones = state.trafficZones || [];
-      if (zones.length === 0) {
-         return { ...r, segments: [{ pos: coords, color: '#4285f4' }] };
+      if (zones.length === 0 || !trafficEnabled) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: { selected: true, completed: false, color: '#4285f4', routeIndex: route.index },
+        });
+        return;
       }
 
-      const TRAFFIC_COLORS = { heavy: '#ea4335', moderate: '#fbbc04', light: '#34a853', clear: '#4285f4' };
-      
-      const segments = [];
+      // Segment by traffic zone
       let currentChunk = [coords[0]];
       let currentColor = '#4285f4';
-
       for (let i = 1; i < coords.length; i++) {
-        const p1 = coords[i - 1];
-        const p2 = coords[i];
-        const midLat = (p1[0] + p2[0]) / 2;
-        const midLon = (p1[1] + p2[1]) / 2;
-
-        let segColor = '#4285f4'; // default
+        const [lon1, lat1] = coords[i - 1];
+        const [lon2, lat2] = coords[i];
+        const midLat = (lat1 + lat2) / 2;
+        const midLon = (lon1 + lon2) / 2;
+        let segColor = '#4285f4';
         let maxDelay = 1;
-
         for (const zone of zones) {
-           const dist = getDistanceKM(midLat, midLon, zone.lat, zone.lon);
-           if (dist <= zone.radiusKm) {
-              if (zone.delayMultiplier > maxDelay) {
-                 maxDelay = zone.delayMultiplier;
-                 segColor = TRAFFIC_COLORS[zone.congestionLevel] || '#ea4335';
-              }
-           }
+          const dist = getDistanceKM(midLat, midLon, zone.lat, zone.lon);
+          if (dist <= zone.radiusKm && zone.delayMultiplier > maxDelay) {
+            maxDelay = zone.delayMultiplier;
+            segColor = TRAFFIC_COLORS[zone.congestionLevel] || '#ea4335';
+          }
         }
-
         if (segColor === currentColor) {
-           currentChunk.push(p2);
+          currentChunk.push(coords[i]);
         } else {
-           segments.push({ pos: currentChunk, color: currentColor });
-           // Start new chunk with the last point to ensure visual connectivity
-           currentChunk = [p1, p2];  
-           currentColor = segColor;
+          features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: currentChunk }, properties: { selected: true, completed: false, color: currentColor, routeIndex: route.index } });
+          currentChunk = [coords[i - 1], coords[i]];
+          currentColor = segColor;
         }
       }
-      if (currentChunk.length > 0) {
-        segments.push({ pos: currentChunk, color: currentColor });
+      if (currentChunk.length >= 2) {
+        features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: currentChunk }, properties: { selected: true, completed: false, color: currentColor, routeIndex: route.index } });
       }
-
-      return { ...r, segments };
     });
-  }, [state.routes, state.selectedRouteIndex, state.trafficZones]);
 
-  // ── Reverse geocode helper ──
+    map.getSource('routes').setData({ type: 'FeatureCollection', features });
+
+    // ── Completed path ──
+    const selRoute = state.routes.find(r => r.index === state.selectedRouteIndex);
+    if (navigating && navPosition?.progress > 0 && selRoute?.geometry?.coordinates) {
+      const allCoords = selRoute.geometry.coordinates;
+      const cutoff = Math.floor(navPosition.progress * allCoords.length);
+      const doneCoords = allCoords.slice(0, cutoff + 1);
+      if (doneCoords.length >= 2 && map.getSource('completed-path')) {
+        map.getSource('completed-path').setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: doneCoords }, properties: {} }] });
+      }
+    } else if (map.getSource('completed-path')) {
+      map.getSource('completed-path').setData({ type: 'FeatureCollection', features: [] });
+    }
+  }, [state.routes, state.selectedRouteIndex, state.trafficZones, trafficEnabled, navigating, navPosition?.progress]);
+
+  /* ══════════════════════════════════════════════
+     FIT BOUNDS when routes found (non-navigation)
+     ══════════════════════════════════════════════ */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || navigating) return;
+
+    const pts = [];
+    if (state.source) pts.push([state.source.lon, state.source.lat]);
+    if (state.destination) pts.push([state.destination.lon, state.destination.lat]);
+    stops.forEach(s => pts.push([s.lon, s.lat]));
+    state.routes.forEach(r => r.geometry?.coordinates?.forEach(c => pts.push(c)));
+
+    if (pts.length >= 2) {
+      const lons = pts.map(p => p[0]);
+      const lats = pts.map(p => p[1]);
+      const bounds = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+      map.fitBounds(bounds, { padding: 70, maxZoom: 15, duration: 900 });
+    } else if (pts.length === 1) {
+      map.flyTo({ center: pts[0], zoom: 14, duration: 900 });
+    }
+  }, [state.routes, state.source?.lat, state.source?.lon, state.destination?.lat, state.destination?.lon]);
+
+  /* ══════════════════════════════════════════════
+     SMART CAMERA — navigation tracking
+     ══════════════════════════════════════════════ */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !navigating || !navPosition || !isFollowing) return;
+
+    const now = Date.now();
+    if (now - lastCameraRef.current < 300) return;
+    lastCameraRef.current = now;
+
+    const speedKmh = navPosition.speedKmh ?? 40;
+    let baseZoom = speedKmh <= 20 ? 18 : speedKmh <= 50 ? 18 - ((speedKmh - 20) / 30) * 2 : speedKmh <= 80 ? 16 - ((speedKmh - 50) / 30) * 2 : 14;
+    const distToTurn = navPosition.distToNextTurn ?? Infinity;
+    if (distToTurn < 100) baseZoom = Math.min(19, baseZoom + (1 - distToTurn / 100) ** 2 * 2);
+    const currentZoom = map.getZoom();
+    const targetZoom = Math.min(19, Math.max(13, baseZoom));
+    const easedZoom = currentZoom + (targetZoom - currentZoom) * 0.15;
+
+    const bearing = navPosition.bearing || 0;
+    let bearingDiff = bearing - prevBearingRef.current;
+    if (bearingDiff > 180) bearingDiff -= 360;
+    if (bearingDiff < -180) bearingDiff += 360;
+    const smoothBearing = prevBearingRef.current + bearingDiff * 0.2;
+    prevBearingRef.current = smoothBearing;
+
+    const bearingRad = (smoothBearing * Math.PI) / 180;
+    const lookAhead = 0.0015 / Math.pow(2, easedZoom - 15);
+    const targetLon = navPosition.lon + Math.sin(bearingRad) * lookAhead;
+    const targetLat = navPosition.lat + Math.cos(bearingRad) * lookAhead;
+
+    map.easeTo({ center: [targetLon, targetLat], zoom: Math.round(easedZoom * 10) / 10, duration: 350, easing: t => t });
+  }, [navigating, navPosition, isFollowing]);
+
+  /* ══════════════════════════════════════════════
+     MARKERS — managed imperatively
+     ══════════════════════════════════════════════ */
   const reverseGeocode = useCallback(async (lat, lon) => {
     try {
-      const resp = await fetch(`/api/routes/reverse-geocode?lat=${lat}&lon=${lon}`);
-      const data = await resp.json();
-      return data.result || { name: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon };
+      const r = await fetch(`/api/routes/reverse-geocode?lat=${lat}&lon=${lon}`);
+      const d = await r.json();
+      return d.result || { name: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon };
     } catch {
       return { name: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon };
     }
   }, []);
 
-  // ── Map Click: drop a temporary pin ──
-  const handleMapClick = useCallback((latlng) => {
-    // Close context menu if open
-    if (contextMenu) {
-      setContextMenu(null);
-      return;
+  // Helper to get/create a marker
+  const upsertMarker = useCallback((key, { lat, lon, html, anchor = 'bottom', draggable = false, onDragEnd, zIndex = 0 }) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    el.style.cssText = `display:flex;align-items:center;justify-content:center;z-index:${zIndex + 1000};`;
+
+    if (markersRef.current[key]) {
+      markersRef.current[key].remove();
     }
-    setDroppedPin({ lat: latlng.lat, lon: latlng.lng });
-  }, [contextMenu]);
 
-  // ── Map Right-Click: show context menu ──
-  const handleMapRightClick = useCallback(async (latlng, containerPoint) => {
-    setDroppedPin(null);
-    setCtxAddress('');
-    setCtxLoading(true);
-    setContextMenu({ position: containerPoint, latlng });
+    const marker = new maplibregl.Marker({ element: el, anchor, draggable })
+      .setLngLat([lon, lat])
+      .addTo(map);
 
-    // Reverse geocode in background
-    const result = await reverseGeocode(latlng.lat, latlng.lng);
-    setCtxAddress(result.name || `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
-    setCtxLoading(false);
+    if (draggable && onDragEnd) {
+      marker.on('dragend', async () => {
+        const { lat: newLat, lng: newLon } = marker.getLngLat();
+        const result = await reverseGeocode(newLat, newLon);
+        onDragEnd({ ...result, lat: newLat, lon: newLon });
+      });
+    }
+
+    markersRef.current[key] = marker;
+    return marker;
   }, [reverseGeocode]);
 
-  // ── Context Menu Actions ──
+  const removeMarker = useCallback((key) => {
+    if (markersRef.current[key]) {
+      markersRef.current[key].remove();
+      delete markersRef.current[key];
+    }
+  }, []);
+
+  // Source marker
+  useEffect(() => {
+    if (state.source && !navigating) {
+      upsertMarker('source', { lat: state.source.lat, lon: state.source.lon, html: makePinHTML('#34a853', 'S'), anchor: 'bottom', draggable: true, onDragEnd: onDragSource, zIndex: 5 });
+    } else {
+      removeMarker('source');
+    }
+  }, [state.source, navigating]);
+
+  // Destination marker
+  useEffect(() => {
+    if (state.destination) {
+      upsertMarker('destination', { lat: state.destination.lat, lon: state.destination.lon, html: makePinHTML('#ea4335', 'E'), anchor: 'bottom', draggable: true, onDragEnd: onDragDestination, zIndex: 5 });
+    } else {
+      removeMarker('destination');
+    }
+  }, [state.destination]);
+
+  // Stop markers
+  useEffect(() => {
+    const activeKeys = new Set();
+    stops.forEach((s, i) => {
+      const key = `stop_${i}`;
+      activeKeys.add(key);
+      upsertMarker(key, { lat: s.lat, lon: s.lon, html: makePinHTML('#fbbc04', `${i + 1}`), anchor: 'bottom', draggable: true, onDragEnd: (loc) => onDragStop?.(i, loc), zIndex: 4 });
+    });
+    Object.keys(markersRef.current).filter(k => k.startsWith('stop_') && !activeKeys.has(k)).forEach(removeMarker);
+  }, [stops]);
+
+  // GPS user location
+  useEffect(() => {
+    if (userLocation) {
+      upsertMarker('gps', { lat: userLocation.lat, lon: userLocation.lon, html: makeGPSHTML(), anchor: 'center', zIndex: 8 });
+    } else {
+      removeMarker('gps');
+    }
+  }, [userLocation]);
+
+  // Navigation vehicle marker
+  useEffect(() => {
+    if (navigating && navPosition) {
+      upsertMarker('vehicle', { lat: navPosition.lat, lon: navPosition.lon, html: makeNavVehicleHTML(navPosition.bearing || 0), anchor: 'center', zIndex: 10 });
+    } else {
+      removeMarker('vehicle');
+    }
+  }, [navigating, navPosition?.lat, navPosition?.lon, navPosition?.bearing]);
+
+  // Dropped pin marker
+  useEffect(() => {
+    if (droppedPin && !contextMenu) {
+      upsertMarker('dropped', { lat: droppedPin.lat, lon: droppedPin.lon, html: makeDroppedPinHTML(), anchor: 'bottom', zIndex: 7 });
+    } else {
+      removeMarker('dropped');
+    }
+  }, [droppedPin, contextMenu]);
+
+  // Temporary POI markers for category search
+  useEffect(() => {
+    const activeKeys = new Set();
+    poiResults.forEach((place, i) => {
+      if (!place.lat || !place.lon) return;
+      const key = `poi_${i}`;
+      activeKeys.add(key);
+      upsertMarker(key, { 
+        lat: place.lat, lon: place.lon, 
+        html: makePinHTML('#00c853', ''), // small green pin without label
+        anchor: 'bottom', 
+        zIndex: 3 
+      });
+    });
+    // Remove stale POI
+    Object.keys(markersRef.current)
+      .filter(k => k.startsWith('poi_') && !activeKeys.has(k))
+      .forEach(removeMarker);
+      
+    // Fit bounds if POI > 0
+    if (poiResults.length > 0 && mapRef.current) {
+      const lons = poiResults.map(p => p.lon);
+      const lats = poiResults.map(p => p.lat);
+      const map = mapRef.current;
+      map.fitBounds([
+         [Math.min(...lons), Math.min(...lats)],
+         [Math.max(...lons), Math.max(...lats)]
+      ], { padding: 80, maxZoom: 15, duration: 800 });
+    }
+  }, [poiResults, upsertMarker, removeMarker]);
+
+  /* ══════════════════════════════════════════════
+     CONTROLS
+     ══════════════════════════════════════════════ */
+  const handleZoomIn = useCallback(() => mapRef.current?.zoomIn({ duration: 300 }), []);
+  const handleZoomOut = useCallback(() => mapRef.current?.zoomOut({ duration: 300 }), []);
+
+  const handleRecenter = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // In navigation, this acts as an explicit follow-mode toggle.
+    if (navigating) {
+      setIsFollowing((prev) => {
+        const next = !prev;
+        if (next && navPosition) {
+          map.flyTo({ center: [navPosition.lon, navPosition.lat], zoom: map.getZoom(), duration: 550 });
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (userLocation) {
+      map.flyTo({ center: [userLocation.lon, userLocation.lat], zoom: 15, duration: 550 });
+    } else if (state.source) {
+      map.flyTo({ center: [state.source.lon, state.source.lat], zoom: 14, duration: 550 });
+    } else if (state.destination) {
+      map.flyTo({ center: [state.destination.lon, state.destination.lat], zoom: 14, duration: 550 });
+    }
+  }, [navigating, navPosition, userLocation, state.source, state.destination]);
+
+  const handleLocateMe = useCallback(() => {
+    if (!navigator.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const result = await reverseGeocode(latitude, longitude);
+      onMapSetSource?.({ ...result, lat: latitude, lon: longitude });
+      setLocating(false);
+    }, () => setLocating(false), { enableHighAccuracy: true, timeout: 10000 });
+  }, [reverseGeocode, onMapSetSource]);
+
+  const handleLayerChange = useCallback((layer) => { setMapLayer(layer); setShowLayerPanel(false); }, []);
+
+  /* ══════════════════════════════════════════════
+     CONTEXT MENU ACTIONS
+     ══════════════════════════════════════════════ */
   const handleDirectionsFrom = useCallback(async () => {
     if (!contextMenu) return;
-    const { latlng } = contextMenu;
-    const result = await reverseGeocode(latlng.lat, latlng.lng);
-    if (onMapSetSource) onMapSetSource({ ...result, lat: latlng.lat, lon: latlng.lng });
+    const result = await reverseGeocode(contextMenu.lat, contextMenu.lng);
+    onMapSetSource?.({ ...result, lat: contextMenu.lat, lon: contextMenu.lng });
     setDroppedPin(null);
   }, [contextMenu, reverseGeocode, onMapSetSource]);
 
   const handleDirectionsTo = useCallback(async () => {
     if (!contextMenu) return;
-    const { latlng } = contextMenu;
-    const result = await reverseGeocode(latlng.lat, latlng.lng);
-    if (onMapSetDestination) onMapSetDestination({ ...result, lat: latlng.lat, lon: latlng.lng });
+    const result = await reverseGeocode(contextMenu.lat, contextMenu.lng);
+    onMapSetDestination?.({ ...result, lat: contextMenu.lat, lon: contextMenu.lng });
     setDroppedPin(null);
   }, [contextMenu, reverseGeocode, onMapSetDestination]);
 
   const handleAddStop = useCallback(async () => {
     if (!contextMenu) return;
-    const { latlng } = contextMenu;
-    const result = await reverseGeocode(latlng.lat, latlng.lng);
-    if (onMapAddStop) onMapAddStop({ ...result, lat: latlng.lat, lon: latlng.lng });
+    const result = await reverseGeocode(contextMenu.lat, contextMenu.lng);
+    onMapAddStop?.({ ...result, lat: contextMenu.lat, lon: contextMenu.lng });
     setDroppedPin(null);
   }, [contextMenu, reverseGeocode, onMapAddStop]);
 
-  // ── GPS Locate Me ──
-  const handleLocateMe = useCallback(() => {
-    if (!navigator.geolocation) return;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const { latitude, longitude } = pos.coords;
-        const result = await reverseGeocode(latitude, longitude);
-        if (onMapSetSource) onMapSetSource({ ...result, lat: latitude, lon: longitude });
-        setLocating(false);
-      },
-      () => setLocating(false),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, [reverseGeocode, onMapSetSource]);
+  /* ══════════════════════════════════════════════
+     DROPPED PIN ACTIONS
+     ══════════════════════════════════════════════ */
+  const handlePinFrom = useCallback(async () => {
+    if (!droppedPin) return;
+    const result = await reverseGeocode(droppedPin.lat, droppedPin.lon);
+    onMapSetSource?.({ ...result, lat: droppedPin.lat, lon: droppedPin.lon });
+    setDroppedPin(null);
+  }, [droppedPin, reverseGeocode, onMapSetSource]);
 
-  const currentLayer = MAP_LAYERS[mapLayer];
+  const handlePinTo = useCallback(async () => {
+    if (!droppedPin) return;
+    const result = await reverseGeocode(droppedPin.lat, droppedPin.lon);
+    onMapSetDestination?.({ ...result, lat: droppedPin.lat, lon: droppedPin.lon });
+    setDroppedPin(null);
+  }, [droppedPin, reverseGeocode, onMapSetDestination]);
 
+  const handlePinStop = useCallback(async () => {
+    if (!droppedPin) return;
+    const result = await reverseGeocode(droppedPin.lat, droppedPin.lon);
+    onMapAddStop?.({ ...result, lat: droppedPin.lat, lon: droppedPin.lon });
+    setDroppedPin(null);
+  }, [droppedPin, reverseGeocode, onMapAddStop]);
+
+  /* ══════════════════════════════════════════════
+     RENDER
+     ══════════════════════════════════════════════ */
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', perspective: '1200px', overflow: 'hidden' }}>
-      <div style={{
-        width: '100%', height: '100%',
-        transition: 'transform 0.5s ease-in-out',
-        transform: navigating && is3DMode 
-          ? 'rotateX(55deg) scale(1.4) translateY(10%)' 
-          : 'rotateX(0deg) scale(1) translateY(0%)',
-        transformOrigin: 'bottom center',
-        pointerEvents: navigating && is3DMode ? 'auto' : 'auto'
-      }}>
-        <MapContainer
-          center={[20.5937, 78.9629]}
-          zoom={5}
-          style={{ width: '100%', height: '100%' }}
-          ref={mapRef}
-          zoomControl={false}
-        >
-          <TileLayer key={mapLayer} url={currentLayer.url} attribution={currentLayer.attribution} />
+    <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+      {/* MapLibre GL container */}
+      <div
+        ref={mapContainerRef}
+        style={{ width: '100%', height: '100%' }}
+      />
 
-          {/* Zoom control in bottom-right */}
-          <ZoomControl />
+      {/* Overlays */}
+      <LayerSidePanel
+        open={showLayerPanel}
+        currentLayer={mapLayer}
+        onLayerChange={handleLayerChange}
+        trafficEnabled={trafficEnabled}
+        onToggleTraffic={() => setTrafficEnabled(p => !p)}
+        onLocate={handleLocateMe}
+        locating={locating}
+        isMobile={isMobile}
+      />
 
-          {!navigating && <FitBounds bounds={allBounds} />}
-          {navigating && navPosition && <FollowMarker position={navPosition} isFollowing={isFollowing} />}
+      <RightControlStack
+        isMobile={isMobile}
+        layersOpen={showLayerPanel}
+        trafficEnabled={trafficEnabled}
+        isFollowing={navigating && isFollowing}
+        navigating={navigating}
+        onToggleLayers={() => setShowLayerPanel(p => !p)}
+        onToggleTraffic={() => setTrafficEnabled(p => !p)}
+        onRecenter={handleRecenter}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+      />
 
-          {/* Map interaction handler */}
-          <MapInteractionHandler 
-            onMapClick={handleMapClick} 
-            onMapRightClick={handleMapRightClick} 
-            onMapInteract={() => isFollowing && setIsFollowing(false)} 
-          />
-
-      {/* ── Route Polylines (Segmented with Traffic + White Border) ── */}
-      {segmentedRoutes.slice().sort((a, b) => (a.index === state.selectedRouteIndex ? 1 : -1)).map((route) => {
-        const sel = route.index === state.selectedRouteIndex;
-
-        const PopupContent = () => (
-          <Popup><div style={{ color: '#e4e6ed', fontSize: 12 }}>
-            <b>{route.summary}</b>{route.isBest && <span style={{ color: '#34a853' }}> ★ Best</span>}<br />
-            📏 {(route.distance/1000).toFixed(1)} km · ⏱ {Math.round(route.duration/60)} min · 💰 ₹{route.estimatedCost}
-            {!sel && <div style={{ fontSize: 11, color: '#8ab4f8', marginTop: 4 }}>Click to select this route</div>}
-          </div></Popup>
-        );
-
-        // Unselected route: classic gray
-        if (!sel) {
-          return (
-            <Polyline key={`unsel_${route.index}`} positions={route.segments[0]?.pos || []}
-              pathOptions={{ color: '#666', weight: 4, opacity: 0.5, dashArray: '8,6', lineCap: 'round', lineJoin: 'round' }}
-              eventHandlers={{
-                click: () => dispatch({ type: 'SELECT_ROUTE', payload: route.index }),
-                mouseover: (e) => { e.target.setStyle({ color: '#8ab4f8', opacity: 0.7, weight: 5 }); },
-                mouseout: (e) => { e.target.setStyle({ color: '#666', opacity: 0.5, weight: 4 }); },
-              }}>
-              <PopupContent />
-            </Polyline>
-          );
-        }
-
-        // ── Dynamic Array Slicing (Vanishing Trail) ──
-        const fullCoords = route.segments.flatMap((req) => req.pos);
-        let activeFullCoords = fullCoords;
-        let activeSegments = route.segments;
-
-        if (sel && navigating && navPosition && navPosition.progress > 0) {
-           // We scale progress by length to roughly find the cutoff index
-           const cutoffIdx = Math.floor(navPosition.progress * fullCoords.length);
-           if (cutoffIdx > 0 && cutoffIdx < fullCoords.length) {
-              activeFullCoords = fullCoords.slice(cutoffIdx);
-              
-              // Slice the grouped segments to avoid drawing them
-              activeSegments = [];
-              let currentRunningLen = 0;
-              for (const seg of route.segments) {
-                 const segLen = seg.pos.length;
-                 if (currentRunningLen + segLen <= cutoffIdx) {
-                    // Entire segment is passed, skip it
-                    currentRunningLen += segLen;
-                 } else if (currentRunningLen < cutoffIdx) {
-                    // Segment overlaps cutoff, slice the segment to only show upcoming
-                    activeSegments.push({ color: seg.color, pos: seg.pos.slice(cutoffIdx - currentRunningLen) });
-                    currentRunningLen += segLen;
-                 } else {
-                    // Segment is entirely upcoming, keep it
-                    activeSegments.push(seg);
-                 }
-              }
-           }
-        }
-
-        const elements = [
-          // Outline (Google style white base map stroke, only for upcoming)
-          <Polyline key={`sel_bg_${route.index}`} positions={activeFullCoords}
-            pathOptions={{ color: '#fff', weight: 10, opacity: 1, lineCap: 'round', lineJoin: 'round' }} />
-        ];
-
-        // Inner colored segments (Traffic, only upcoming)
-        activeSegments.forEach((seg, idx) => {
-          elements.push(
-            <Polyline key={`seg_${route.index}_${idx}`} positions={seg.pos}
-              pathOptions={{ color: seg.color, weight: 6, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }}>
-              <PopupContent />
-            </Polyline>
-          );
-        });
-
-        return elements;
-      })}
-
-      {/* ── Source Marker (Draggable) ── */}
-      {state.source && !navigating && (
-        <Marker
-          position={[state.source.lat, state.source.lon]}
-          icon={dot('#34a853', 'S')}
-          draggable={true}
-          eventHandlers={{
-            dragend: async (e) => {
-              const { lat, lng } = e.target.getLatLng();
-              const result = await reverseGeocode(lat, lng);
-              if (onDragSource) onDragSource({ ...result, lat, lon: lng });
-            },
-          }}
-        >
-          <Popup><div style={{ color: '#e4e6ed' }}>
-            <b>Start</b><br />{state.source.name}
-            <div style={{ fontSize: 10, color: '#5c6078', marginTop: 4 }}>Drag to change start point</div>
-          </div></Popup>
-        </Marker>
-      )}
-
-      {/* ── Destination Marker (Draggable) ── */}
-      {state.destination && (
-        <Marker
-          position={[state.destination.lat, state.destination.lon]}
-          icon={dot('#ea4335', 'E')}
-          draggable={true}
-          eventHandlers={{
-            dragend: async (e) => {
-              const { lat, lng } = e.target.getLatLng();
-              const result = await reverseGeocode(lat, lng);
-              if (onDragDestination) onDragDestination({ ...result, lat, lon: lng });
-            },
-          }}
-        >
-          <Popup><div style={{ color: '#e4e6ed' }}>
-            <b>End</b><br />{state.destination.name}
-            <div style={{ fontSize: 10, color: '#5c6078', marginTop: 4 }}>Drag to change end point</div>
-          </div></Popup>
-        </Marker>
-      )}
-
-      {/* ── Intermediate Stop Markers (Draggable) ── */}
-      {stops.map((s, i) => (
-        <Marker
-          key={i}
-          position={[s.lat, s.lon]}
-          icon={dot('#fbbc04', `${i+1}`)}
-          draggable={true}
-          eventHandlers={{
-            dragend: async (e) => {
-              const { lat, lng } = e.target.getLatLng();
-              const result = await reverseGeocode(lat, lng);
-              if (onDragStop) onDragStop(i, { ...result, lat, lon: lng });
-            },
-          }}
-        >
-          <Popup><div style={{ color: '#e4e6ed' }}>
-            <b>Stop {i+1}</b><br />{s.name}
-            <div style={{ fontSize: 10, color: '#5c6078', marginTop: 4 }}>Drag to reposition</div>
-          </div></Popup>
-        </Marker>
-      ))}
-
-      {/* ── Dropped pin (temporary) ── */}
-      {droppedPin && !contextMenu && (
-        <Marker position={[droppedPin.lat, droppedPin.lon]} icon={droppedPinIcon()}>
-          <Popup><DroppedPinPopup lat={droppedPin.lat} lon={droppedPin.lon}
-            onFrom={async () => {
-              const result = await reverseGeocode(droppedPin.lat, droppedPin.lon);
-              if (onMapSetSource) onMapSetSource({ ...result, lat: droppedPin.lat, lon: droppedPin.lon });
-              setDroppedPin(null);
-            }}
-            onTo={async () => {
-              const result = await reverseGeocode(droppedPin.lat, droppedPin.lon);
-              if (onMapSetDestination) onMapSetDestination({ ...result, lat: droppedPin.lat, lon: droppedPin.lon });
-              setDroppedPin(null);
-            }}
-            onStop={async () => {
-              const result = await reverseGeocode(droppedPin.lat, droppedPin.lon);
-              if (onMapAddStop) onMapAddStop({ ...result, lat: droppedPin.lat, lon: droppedPin.lon });
-              setDroppedPin(null);
-            }}
-            onClose={() => setDroppedPin(null)}
-          /></Popup>
-        </Marker>
-      )}
-
-      {/* ── User GPS Location ── */}
-      {userLocation && (
-        <>
-          <Marker position={[userLocation.lat, userLocation.lon]} icon={gpsIcon()} zIndexOffset={500} />
-          <CircleMarker center={[userLocation.lat, userLocation.lon]} radius={30}
-            pathOptions={{ color: '#4285f4', fillColor: '#4285f4', fillOpacity: 0.08, weight: 1, dashArray: '4,4' }} />
-        </>
-      )}
-
-      {/* ── NAVIGATION MARKER ── */}
-      {navigating && navPosition && (
-        <>
-          <Marker position={[navPosition.lat, navPosition.lon]} icon={navArrow(navPosition.bearing || 0)} zIndexOffset={1000} />
-          <CircleMarker center={[navPosition.lat, navPosition.lon]} radius={12}
-            pathOptions={{ color: '#4285f4', fillColor: '#4285f4', fillOpacity: 0.1, weight: 1 }} />
-        </>
-      )}
-
-      {/* ── Context Menu Overlay ── */}
+      {/* Context menu */}
       {contextMenu && (
         <ContextMenu
-          position={contextMenu.position}
-          latlng={contextMenu.latlng}
-          address={ctxAddress}
-          loading={ctxLoading}
+          position={{ x: contextMenu.x, y: contextMenu.y }}
+          coords={{ lat: contextMenu.lat, lng: contextMenu.lng }}
+          address={contextMenu.address}
+          loading={contextMenu.loading}
           onDirectionsFrom={handleDirectionsFrom}
           onDirectionsTo={handleDirectionsTo}
           onAddStop={handleAddStop}
@@ -734,86 +1099,42 @@ export default function MapView({
         />
       )}
 
-      {/* Traffic Zones overlay completely removed per Google Maps design paradigm */}
-
-      {/* ── Floating Controls ── */}
-      <LocateMeButton onLocate={handleLocateMe} locating={locating} />
-      <LayerSwitcher current={mapLayer} onChange={setMapLayer} />
-        </MapContainer>
-      </div>
-      
-      {/* ── Pro Navigation Overlay Buttons ── */}
-      {navigating && (
-        <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {!isFollowing && (
-            <button 
-              onClick={() => setIsFollowing(true)} 
-              onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-              style={{ padding: '10px 16px', background: '#4285f4', color: '#fff', borderRadius: '24px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', cursor: 'pointer', fontWeight: 600, transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-              🎯 Re-center
-            </button>
-          )}
-          <button 
-            onClick={() => setIs3DMode(!is3DMode)} 
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(26,29,39,0.9)'}
-            style={{ padding: '8px 12px', background: 'rgba(26,29,39,0.9)', color: '#fff', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer', fontSize: 12, fontWeight: 500, transition: 'all 0.2s', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', backdropFilter: 'blur(10px)' }}>
-            {is3DMode ? '🗺️ 2D Mode' : '🛣️ 3D Mode'}
-          </button>
-        </div>
+      {/* Dropped pin tooltip */}
+      {droppedPin && !contextMenu && (
+        <DroppedPinTooltip
+          lat={droppedPin.lat}
+          lon={droppedPin.lon}
+          x={droppedPin.x}
+          y={droppedPin.y}
+          onFrom={handlePinFrom}
+          onTo={handlePinTo}
+          onStop={handlePinStop}
+          onClose={() => setDroppedPin(null)}
+        />
       )}
-    </div>
-  );
-}
 
-/* ── Zoom control positioned at bottom-right ── */
-function ZoomControl() {
-  const map = useMap();
-  useEffect(() => {
-    const zoomControl = L.control.zoom({ position: 'bottomright' });
-    zoomControl.addTo(map);
-    return () => { try { zoomControl.remove(); } catch {} };
-  }, [map]);
-  return null;
-}
-
-/* ── Dropped Pin Popup Content ── */
-function DroppedPinPopup({ lat, lon, onFrom, onTo, onStop, onClose }) {
-  const [addr, setAddr] = useState('Loading...');
-  useEffect(() => {
-    (async () => {
-      try {
-        const resp = await fetch(`/api/routes/reverse-geocode?lat=${lat}&lon=${lon}`);
-        const data = await resp.json();
-        setAddr(data.result?.name || `${lat.toFixed(5)}, ${lon.toFixed(5)}`);
-      } catch {
-        setAddr(`${lat.toFixed(5)}, ${lon.toFixed(5)}`);
-      }
-    })();
-  }, [lat, lon]);
-
-  const btnStyle = {
-    padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
-    fontSize: 11, fontWeight: 600, fontFamily: 'inherit', transition: 'opacity 0.15s',
-    display: 'flex', alignItems: 'center', gap: 4, flex: 1, justifyContent: 'center',
-  };
-
-  return (
-    <div style={{ color: '#e4e6ed', minWidth: 200 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>{addr}</div>
-      <div style={{ fontSize: 10, color: '#5c6078', marginBottom: 8 }}>{lat.toFixed(5)}, {lon.toFixed(5)}</div>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <button style={{ ...btnStyle, background: 'rgba(52,168,83,0.2)', color: '#34a853' }} onClick={onFrom}>
-          🟢 From
-        </button>
-        <button style={{ ...btnStyle, background: 'rgba(234,67,53,0.2)', color: '#ea4335' }} onClick={onTo}>
-          🔴 To
-        </button>
-        <button style={{ ...btnStyle, background: 'rgba(251,188,4,0.2)', color: '#fbbc04' }} onClick={onStop}>
-          🟡 Stop
-        </button>
-      </div>
+      {/* Navigation HUD */}
+      {navigating && navPosition && (
+        <>
+          <NavigationHeader
+            currentInstruction={navPosition.currentInstruction}
+            nextInstruction={navPosition.nextInstruction}
+            distToNextTurn={navPosition.distToNextTurn}
+            isMobile={isMobile}
+          />
+          <SpeedPanel speedKmh={navPosition.speedKmh} isMobile={isMobile} />
+          <NavigationFooter
+            remainDist={navPosition.remainDist}
+            remainTimeSeconds={navPosition.remainTimeSeconds}
+            eta={navPosition.eta}
+            onExit={() => setIsFollowing(false)}
+            vehicleType={vehicleType}
+            vehicleOptions={VEHICLE_OPTIONS}
+            onVehicleChange={setVehicleType}
+            isMobile={isMobile}
+          />
+        </>
+      )}
     </div>
   );
 }

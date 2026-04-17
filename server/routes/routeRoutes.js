@@ -16,13 +16,13 @@ const router = Router();
  */
 router.post('/optimize', async (req, res, next) => {
   try {
-    const { source, destination, preference = 'fastest', departureTime } = req.body;
+    const { source, destination, preference = 'fastest', departureTime, currentRouteIndex = null } = req.body;
 
     if (!source?.lat || !source?.lon || !destination?.lat || !destination?.lon) {
       return res.status(400).json({ success: false, error: 'Source and destination with lat/lon are required' });
     }
 
-    const result = await optimizeRoute({ source, destination, preference, departureTime });
+    const result = await optimizeRoute({ source, destination, preference, departureTime, currentRouteIndex });
     res.json(result);
   } catch (err) {
     console.error('Route optimize error:', err.message);
@@ -37,14 +37,14 @@ router.post('/optimize', async (req, res, next) => {
  */
 router.post('/refresh', async (req, res, next) => {
   try {
-    const { source, destination, preference = 'fastest', departureTime } = req.body;
+    const { source, destination, preference = 'fastest', departureTime, currentRouteIndex = null } = req.body;
 
     if (!source?.lat || !source?.lon || !destination?.lat || !destination?.lon) {
       return res.status(400).json({ success: false, error: 'Source and destination with lat/lon are required' });
     }
 
     const result = await optimizeRoute({
-      source, destination, preference, departureTime,
+      source, destination, preference, departureTime, currentRouteIndex,
       isRefresh: true, // Forces traffic zone regeneration
     });
     res.json(result);
@@ -117,10 +117,10 @@ router.post('/multi-stop', async (req, res, next) => {
  */
 router.get('/geocode', async (req, res, next) => {
   try {
-    const { q } = req.query;
+    const { q, lat, lon } = req.query;
     if (!q || q.length < 2) return res.status(400).json({ success: false, error: 'Query too short' });
 
-    const results = await geocode(q);
+    const results = await geocode(q, lat ? parseFloat(lat) : null, lon ? parseFloat(lon) : null);
     res.json({ success: true, results });
   } catch (err) {
     next(err);

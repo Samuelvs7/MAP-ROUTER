@@ -21,11 +21,21 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  overflow: hidden;
 }
 
 /* ── Buttons ── */
@@ -78,21 +88,24 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-/* ── Leaflet ── */
-.leaflet-container { background: var(--bg) !important; }
-.leaflet-control-zoom a {
-  background: var(--panel) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
+/* ── MapLibre GL ── */
+.maplibregl-canvas {
+  /* GPU compositing hint — keeps map on its own layer */
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
 }
-.leaflet-popup-content-wrapper {
-  background: var(--panel) !important;
-  color: var(--text) !important;
-  border-radius: 10px !important;
-  border: 1px solid var(--border);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4) !important;
+.maplibregl-map {
+  background: var(--bg) !important;
+  font-family: inherit;
 }
-.leaflet-popup-tip { background: var(--panel) !important; }
+/* Hide default MapLibre attribution (design choice) */
+.maplibregl-ctrl-attrib {
+  display: none !important;
+}
+/* Smooth canvas during resize */
+.maplibregl-canvas-container {
+  touch-action: none;
+}
 
 /* ── Animations ── */
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
@@ -110,6 +123,21 @@ body {
   60% { transform: translateY(2px) scale(0.95); opacity: 1; }
   100% { transform: translateY(0) scale(1); opacity: 1; }
 }
+@keyframes turnGlowPulse {
+  0%   { stroke-opacity: 0.25; }
+  50%  { stroke-opacity: 0.45; }
+  100% { stroke-opacity: 0.25; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Route line transitions (MapLibre handles via paint expressions) ── */
 
 .skeleton {
   background: linear-gradient(90deg, var(--panel) 25%, var(--panel-alt) 50%, var(--panel) 75%);
@@ -131,32 +159,14 @@ body {
   transform: scale(0.98);
 }
 
-/* ── Leaflet Overrides ── */
-.leaflet-control-zoom {
-  border: none !important;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
-  border-radius: 10px !important;
-  overflow: hidden !important;
-}
-.leaflet-control-zoom a {
-  width: 34px !important;
-  height: 34px !important;
-  line-height: 34px !important;
-  font-size: 16px !important;
-}
-
-/* ── Disable default leaflet context menu ── */
-.leaflet-container {
+/* ── MapLibre cursor overrides ── */
+.maplibregl-map canvas {
   cursor: crosshair !important;
 }
-.leaflet-dragging .leaflet-container {
+.maplibregl-map.maplibregl-drag canvas {
   cursor: grabbing !important;
 }
-.leaflet-marker-draggable {
-  cursor: grab !important;
-}
-
-/* ── Route line cursor ── */
-.leaflet-interactive {
-  cursor: pointer !important;
+/* GPU layer hint for UI panels — prevents jank on map drag */
+.panel {
+  transform: translate3d(0, 0, 0);
 }

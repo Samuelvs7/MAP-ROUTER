@@ -1,113 +1,150 @@
-# 🧭 AI Smart Router Planner
+# AI Smart Router Planner
 
-> An intelligent, AI-powered route optimization web application that goes beyond traditional map services.
+An intelligent route optimization web app that combines graph algorithms, weighted scoring, and ML-based traffic prediction.
 
-## 🎯 What Makes It Different from Google Maps?
+## What Makes It Different
 
-Traditional maps use simple shortest-path algorithms. Our system combines:
+Traditional maps focus mostly on shortest-path logic. This project combines:
 
-- **Dijkstra's Algorithm** — baseline shortest path
-- **A\* Algorithm** — heuristic-enhanced pathfinding (Haversine)
-- **AI Weighted Scoring Model** — multi-factor route ranking
+- Dijkstra (baseline shortest path)
+- A* (heuristic pathfinding with Haversine)
+- Weighted AI scoring across distance, time, traffic, cost, weather, and road type
+- ML traffic prediction via a Flask API (`time`, `day` -> traffic level/score)
 
-### AI Scoring Formula
-```
-Score = w₁·distance + w₂·time + w₃·traffic + w₄·cost + w₅·weather + w₆·road_type
-```
-Weights dynamically adjust based on user preference (fastest/cheapest/scenic/no-tolls) and time-of-day traffic patterns.
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, Tailwind CSS 3, React-Leaflet, Framer Motion |
-| Backend | Node.js, Express.js |
-| Database | MongoDB Atlas (optional — works without it) |
-| AI Engine | Custom JS (Dijkstra, A*, Weighted Scoring) |
-| Maps API | OpenRouteService (or mock data) |
-| Weather | OpenWeatherMap (or mock data) |
+|---|---|
+| Frontend | React 18, Vite, Tailwind CSS, React-Leaflet, Framer Motion |
+| Backend | Node.js, Express |
+| Database | MongoDB Atlas (optional) |
+| Routing | OpenRouteService + OSRM fallback |
+| Weather | OpenWeatherMap (optional) |
+| ML Service | Flask + model.pkl |
+| LLM Messaging | Gemini (optional fallback-safe messaging) |
 
-## 🚀 Quick Start
+## Project Structure
+
+```text
+client/      # React frontend
+server/      # Express backend
+ml-model/    # Flask ML API (predict traffic)
+```
+
+## Quick Start
 
 ### Prerequisites
-- Node.js 18+ installed
 
-### 1. Clone & Install
+- Node.js 18+
+- Python 3.10+
+
+### 1) Install Dependencies
 
 ```bash
-# Install server dependencies
+# From project root (needed for one-command run)
+npm install
+
+# Backend
 cd server
 npm install
 
-# Install client dependencies  
+# Frontend
 cd ../client
 npm install
+
+# ML API
+cd ../ml-model
+pip install -r requirements.txt
 ```
 
-### 2. Configure Environment (Optional)
+### 2) Environment Setup
 
-Copy `server/.env.example` to `server/.env` and add your API keys:
-```
+Create `server/.env` (you can copy from `server/.env.example`):
+
+```env
 ORS_API_KEY=your_openrouteservice_key
 WEATHER_API_KEY=your_openweathermap_key
 MONGO_URI=your_mongodb_uri
+GEMINI_API_KEY=your_gemini_key
+ML_PREDICT_URL=http://localhost:5001/predict
 ```
-> **Note:** The app works WITHOUT any API keys using realistic mock data!
 
-### 3. Run
+## Run the System
+
+### Option A: Manual (recommended for demos)
+
+Use 3 terminals:
 
 ```bash
-# Terminal 1 — Start backend
+# Terminal 1 - ML API (5001)
+cd ml-model
+python app.py
+
+# Terminal 2 - Backend API (5000)
 cd server
 npm run dev
 
-# Terminal 2 — Start frontend
+# Terminal 3 - Frontend (5173)
 cd client
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser.
+Open: `http://localhost:5173`
 
-## 📁 Project Structure
+### Option B: One command
 
-```
-├── client/                  # React Frontend
-│   ├── src/
-│   │   ├── components/      # UI & Map components
-│   │   ├── pages/           # HomePage, PlannerPage, HistoryPage
-│   │   ├── context/         # Global state management
-│   │   └── services/        # API client
-│
-├── server/                  # Express Backend
-│   ├── ai/                  # 🧠 AI Engine
-│   │   ├── dijkstra.js      # Dijkstra's algorithm
-│   │   ├── astar.js         # A* algorithm
-│   │   ├── scoringModel.js  # Weighted scoring AI
-│   │   ├── routeOptimizer.js     # Main orchestrator
-│   │   └── multiStopOptimizer.js # TSP solver
-│   ├── services/            # API wrappers (ORS, Weather, Geocode)
-│   ├── routes/              # Express API routes
-│   └── models/              # MongoDB schemas
+From project root:
+
+```bash
+npm run dev
 ```
 
-## 🧠 AI Features
+This runs ML + backend + frontend together using `concurrently`.
 
-1. **Multi-Factor Route Scoring** — 6 normalized features with dynamic weights
-2. **Explainable AI** — natural language explanation of route selection
-3. **Traffic Simulation** — time-of-day based traffic multipliers
-4. **Weather-Aware Routing** — weather penalty applied to routes
-5. **Multi-Stop Optimization** — TSP with Nearest Neighbor + 2-opt
-6. **Algorithm Comparison** — Dijkstra vs A* performance metrics
+### Pre-demo check (Step 9)
 
-## 🔌 API Endpoints
+From project root:
+
+```bash
+npm run health:check
+```
+
+This checks:
+
+- Frontend: `http://localhost:5173/`
+- Backend: `http://localhost:5000/api/health`
+- ML API: `http://localhost:5001/health`
+
+## Health Checks
+
+- Backend: `http://localhost:5000/api/health`
+- ML API: `http://localhost:5001/health`
+
+## API Endpoints (Backend)
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/routes/optimize` | AI-optimized routes |
+|---|---|---|
+| POST | `/api/routes/optimize` | Optimize routes |
+| POST | `/api/routes/refresh` | Controlled refresh loop |
 | POST | `/api/routes/multi-stop` | Multi-stop optimization |
-| GET | `/api/routes/geocode?q=` | Geocode place name |
-| GET | `/api/history` | Route search history |
-| GET | `/api/health` | Health check |
+| GET | `/api/routes/geocode?q=` | Geocoding |
+| GET | `/api/routes/reverse-geocode?lat=&lon=` | Reverse geocoding |
+| GET | `/api/history` | Route history |
+| GET | `/api/health` | Backend health |
 
-## 📜 License
+## API Endpoints (ML)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `http://localhost:5001/predict` | Predict traffic from `{ time, day }` |
+| GET | `http://localhost:5001/health` | ML service health |
+
+## Notes
+
+- Traffic routing falls back safely if ML service is down.
+- Gemini is used only for user-facing switch suggestions, not route calculations.
+- Rotate API keys immediately if they were exposed publicly.
+
+## License
+
 MIT

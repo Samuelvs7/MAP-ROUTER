@@ -6,7 +6,7 @@
 // Google Maps does NOT do this.
 // ============================================================
 
-import { getDistanceMatrix, getOptimizedTrip } from '../services/orsService.js';
+import { getDistanceMatrix, getOptimizedTrip, getRoutes } from '../services/orsService.js';
 
 function nearestNeighbor(distMatrix, startIdx, endIdx) {
   const n = distMatrix.length;
@@ -55,6 +55,54 @@ function tourCost(tour, matrix) {
   return t;
 }
 
+async function stitchRouteLegs(allPoints, tour) {
+  const stitchedCoords = [];
+  const stitchedDirections = [];
+  let totalDistance = 0;
+  let totalDuration = 0;
+
+  for (let i = 0; i < tour.length - 1; i++) {
+    const from = allPoints[tour[i]];
+    const to = allPoints[tour[i + 1]];
+
+    try {
+      const legRoutes = await getRoutes(from.lat, from.lon, to.lat, to.lon, 'fastest');
+      const leg = legRoutes?.[0];
+      const legCoords = leg?.geometry?.coordinates || [];
+
+      if (Array.isArray(legCoords) && legCoords.length >= 2) {
+        if (stitchedCoords.length === 0) stitchedCoords.push(...legCoords);
+        else stitchedCoords.push(...legCoords.slice(1));
+      }
+
+      for (const step of (leg?.directions || [])) {
+        totalDistance += Number(step.distance || 0);
+        totalDuration += Number(step.duration || 0);
+        stitchedDirections.push({
+          ...step,
+          legIndex: i,
+          cumulativeDistance: Math.round(totalDistance),
+          cumulativeTime: Math.round(totalDuration),
+        });
+      }
+    } catch (err) {
+      console.warn(`   ⚠️ Leg stitching failed (${i + 1}/${tour.length - 1}): ${err.message}`);
+    }
+  }
+
+  if (stitchedDirections.length > 0) {
+    for (const step of stitchedDirections) {
+      step.remainingDistance = Math.max(0, totalDistance - (step.cumulativeDistance || 0));
+      step.remainingTime = Math.max(0, totalDuration - (step.cumulativeTime || 0));
+    }
+  }
+
+  return {
+    geometry: stitchedCoords.length >= 2 ? { type: 'LineString', coordinates: stitchedCoords } : null,
+    directions: stitchedDirections,
+  };
+}
+
 export async function optimizeMultiStop(source, destination, stops) {
   console.log(`\n📍 Multi-Stop Optimizer: ${stops.length} intermediate stops`);
 
@@ -80,7 +128,7 @@ export async function optimizeMultiStop(source, destination, stops) {
   const optDist = tourCost(optTour, distMatrix);
   const optDur = tourCost(optTour, durMatrix);
 
-  // Try OSRM Trip API
+  // Try OSRM Trip API (best full-geometry for multi-stop)
   let osrmTrip = null;
   try { osrmTrip = await getOptimizedTrip(allPoints); } catch {}
 
@@ -130,6 +178,17 @@ export async function optimizeMultiStop(source, destination, stops) {
     }
   }
 
+  let routeGeometry = osrmTrip?.geometry || null;
+  let routeDirections = osrmTrip?.directions || [];
+
+  // Fallback: if OSRM Trip geometry is missing, stitch each leg route.
+  if (!routeGeometry) {
+    console.log('   ⚠️ Trip geometry unavailable, stitching leg routes...');
+    const stitched = await stitchRouteLegs(allPoints, bestTour);
+    routeGeometry = stitched.geometry;
+    if (!routeDirections.length) routeDirections = stitched.directions;
+  }
+
   return {
     success: true,
     optimizedSequence, legs,
@@ -140,8 +199,8 @@ export async function optimizeMultiStop(source, destination, stops) {
     distanceSaved: Math.round(saved),
     timeSaved: Math.round(timeSaved),
     improvement, method,
-    geometry: osrmTrip?.geometry || null,
-    directions: osrmTrip?.directions || [],
+    geometry: routeGeometry,
+    directions: routeDirections,
     explanation: {
       summary: saved > 0
         ? `Reordering your stops saves ${(saved / 1000).toFixed(1)} km and ${Math.round(timeSaved / 60)} minutes. ${method} found the optimal visiting order.`

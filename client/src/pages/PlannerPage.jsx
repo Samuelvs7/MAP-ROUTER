@@ -6,6 +6,8 @@ import { useRoute } from '../context/RouteContext';
 import { optimizeRoute, refreshRoute, optimizeMultiStop, geocodePlace, saveHistory } from '../services/api';
 import MapView from '../components/map/MapView';
 import NavigationPanel from '../components/NavigationPanel';
+import AIAssistantPanel from '../components/AIAssistantPanel';
+import useNavigationAI from '../hooks/useNavigationAI';
 
 /* ══════════════════════════════════════════════
    Location Input Component
@@ -116,6 +118,48 @@ function DirectionStep({ step, idx, isLast }) {
 }
 
 /* ══════════════════════════════════════════════
+   AI Assistant Panel Wrapper — connects hook to UI
+   ══════════════════════════════════════════════ */
+function AIAssistantPanelWrapper({
+  source, destination, currentRoute, navigating, weather, allRoutes,
+  latestSwitchSuggestion, onAcceptSwitch, onDismissSwitch,
+}) {
+  const ai = useNavigationAI({
+    source,
+    destination,
+    currentRoute,
+    navigating,
+    trafficLevel: currentRoute?.trafficLevel || null,
+    trafficScore: currentRoute?.trafficScore || 0,
+    weather,
+    switchSuggestion: latestSwitchSuggestion,
+    allRoutes,
+  });
+
+  const handleAccept = useCallback(() => {
+    const suggestion = ai.acceptSuggestion();
+    if (suggestion && onAcceptSwitch) onAcceptSwitch(suggestion);
+  }, [ai, onAcceptSwitch]);
+
+  const handleDismiss = useCallback(() => {
+    ai.dismissSuggestion();
+    if (onDismissSwitch) onDismissSwitch();
+  }, [ai, onDismissSwitch]);
+
+  return (
+    <AIAssistantPanel
+      messages={ai.messages}
+      images={ai.images}
+      isThinking={ai.isThinking}
+      pendingSuggestion={ai.pendingSuggestion}
+      onSendMessage={ai.sendMessage}
+      onAcceptSwitch={handleAccept}
+      onDismissSwitch={handleDismiss}
+    />
+  );
+}
+
+/* ══════════════════════════════════════════════
    PLANNER PAGE — MAIN COMPONENT
    ══════════════════════════════════════════════ */
 export default function PlannerPage() {
@@ -137,6 +181,7 @@ export default function PlannerPage() {
   // Dynamic refresh
   const [autoRefresh, setAutoRefresh] = useState(false);
   const refreshIntervalRef = useRef(null);
+  const [latestSwitchSuggestion, setLatestSwitchSuggestion] = useState(null);
 
   const isMultiStop = stops.length > 0;
 
@@ -322,14 +367,39 @@ export default function PlannerPage() {
         transition: 'width 0.3s ease',
       }}>
 
-        {/* If navigating, show NavigationPanel */}
+        {/* If navigating, show NavigationPanel + AI below */}
         {navigating && directionsRoute ? (
-          <NavigationPanel
-            route={directionsRoute}
-            onPositionUpdate={handlePositionUpdate}
-            onClose={() => { setNavigating(false); setNavPosition(null); }}
-          />
-        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <NavigationPanel
+                route={directionsRoute}
+                onPositionUpdate={handlePositionUpdate}
+                onClose={() => { setNavigating(false); setNavPosition(null); }}
+              />
+            </div>
+            {/* AI Co-Pilot during navigation */}
+            <div style={{ height: 220, borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+              <AIAssistantPanelWrapper
+                source={state.source}
+                destination={state.destination}
+                currentRoute={directionsRoute}
+                navigating={navigating}
+                weather={state.weather}
+                allRoutes={state.routes}
+                latestSwitchSuggestion={latestSwitchSuggestion}
+                onAcceptSwitch={(suggestion) => {
+                  const nextRoute = state.routes.find((r) => r.index === suggestion.proposedRouteIndex);
+                  if (nextRoute) {
+                    dispatch({ type: 'SELECT_ROUTE', payload: suggestion.proposedRouteIndex });
+                    setDirectionsRoute(nextRoute);
+                    toast.success('Switched to faster route!');
+                  }
+                  setLatestSwitchSuggestion(null);
+                }}
+                onDismissSwitch={() => setLatestSwitchSuggestion(null)}
+              />
+            </div>
+          </div>        ) : (
           <>
             {/* Search Section */}
             <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
@@ -433,13 +503,14 @@ export default function PlannerPage() {
               </div>
             </div>
 
-            {/* Results Tabs */}
-            {(state.routes.length > 0 || multiResult) && (
+            {/* Results Tabs — Always visible for AI Assistant */}
+            {true && (
               <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
                 {[
                   { id: 'routes', label: 'Routes' },
                   { id: 'directions', label: 'Directions' },
                   ...(multiResult ? [{ id: 'multi', label: 'Optimization' }] : []),
+                  { id: 'assistant', label: 'AI Assistant' },
                 ].map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)}
                     style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 500, border: 'none', background: 'none',
@@ -624,8 +695,31 @@ export default function PlannerPage() {
                 </div>
               )}
 
+              {/* AI Assistant Tab */}
+              {tab === 'assistant' && (
+                <AIAssistantPanelWrapper
+                  source={state.source}
+                  destination={state.destination}
+                  currentRoute={directionsRoute}
+                  navigating={navigating}
+                  weather={state.weather}
+                  allRoutes={state.routes}
+                  latestSwitchSuggestion={latestSwitchSuggestion}
+                  onAcceptSwitch={(suggestion) => {
+                    const nextRoute = state.routes.find((r) => r.index === suggestion.proposedRouteIndex);
+                    if (nextRoute) {
+                      dispatch({ type: 'SELECT_ROUTE', payload: suggestion.proposedRouteIndex });
+                      setDirectionsRoute(nextRoute);
+                      toast.success('Switched to faster route!');
+                    }
+                    setLatestSwitchSuggestion(null);
+                  }}
+                  onDismissSwitch={() => setLatestSwitchSuggestion(null)}
+                />
+              )}
+
               {/* Empty state */}
-              {state.routes.length === 0 && !multiResult && !state.loading && !multiLoading && (
+              {tab !== 'assistant' && state.routes.length === 0 && !multiResult && !state.loading && !multiLoading && (
                 <div style={{ textAlign: 'center', paddingTop: 40 }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>🗺️</div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-dim)' }}>Plan your route</div>
