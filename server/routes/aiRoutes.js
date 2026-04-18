@@ -120,14 +120,40 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    const reply = await generateChatReply({ message, context });
+    // Auto-detect intent for visuals and fetch them
+    const wantsVisuals = /visual|picture|image|photo|street view|show me/i.test(message);
+    let images = [];
+    
+    // We run the AI reply generation and image fetch concurrently if needed
+    const tasks = [generateChatReply({ message, context })];
+
+    const visualTarget = context.destination?.lat && context.destination?.lon
+      ? context.destination
+      : context.source;
+
+    if (wantsVisuals && visualTarget?.lat && visualTarget?.lon) {
+      tasks.push(getNearbyMapillaryImages({ 
+        lat: Number(visualTarget.lat), 
+        lon: Number(visualTarget.lon), 
+        limit: 4 
+      }));
+    }
+
+    const [reply, imagesResult] = await Promise.all(tasks);
+
+    if (imagesResult && imagesResult.images) {
+      images = imagesResult.images;
+    }
 
     return res.json({
       success: true,
       reply,
+      images,
+      hasImages: images.length > 0,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
+    console.error('Chat endpoint error:', err);
     return res.status(500).json({
       success: false,
       error: err.message || 'Chat request failed',

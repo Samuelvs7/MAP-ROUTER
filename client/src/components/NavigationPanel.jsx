@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigation, Pause, Play, X, Volume2, VolumeX, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Navigation, Pause, Play, Volume2, VolumeX, X } from 'lucide-react';
 
 function haversineMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
+  const radius = 6371000;
   const toRad = (deg) => (deg * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function computeBearing(lat1, lon1, lat2, lon2) {
@@ -79,11 +79,11 @@ function fmtTime(seconds = 0) {
   return `${mins} min`;
 }
 
-export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
+export default function NavigationPanel({ route, onPositionUpdate, onClose, assistantSlot = null }) {
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [gpsError, setGpsError] = useState('');
-  const [navMode, setNavMode] = useState('sim'); // 'sim' or 'live'
+  const [navMode, setNavMode] = useState('sim');
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const [elapsedDistance, setElapsedDistance] = useState(0);
@@ -93,6 +93,7 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
   const [eta, setEta] = useState('--:--');
   const [distanceToTurn, setDistanceToTurn] = useState(0);
   const [simDist, setSimDist] = useState(0);
+  const [panelTab, setPanelTab] = useState('details');
 
   const watchIdRef = useRef(null);
   const prevPointRef = useRef(null);
@@ -139,17 +140,13 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
     for (const segment of polyline.segments) {
       const projection = projectToSegment(point, segment.start, segment.end);
       if (!bestMatch || projection.distance < bestMatch.distance) {
-        bestMatch = {
-          ...projection,
-          segment,
-        };
+        bestMatch = { ...projection, segment };
       }
     }
 
     if (!bestMatch) return;
 
-    const traveled =
-      bestMatch.segment.cumulativeStart + bestMatch.segment.length * bestMatch.t;
+    const traveled = bestMatch.segment.cumulativeStart + bestMatch.segment.length * bestMatch.t;
     const progressValue = polyline.total > 0 ? Math.min(1, Math.max(0, traveled / polyline.total)) : 0;
     const remaining = Math.max(0, polyline.total - traveled);
     const remainingTime =
@@ -174,7 +171,9 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
       const deltaDistance = haversineMeters(previous.lat, previous.lon, point.lat, point.lon);
       const deltaSeconds = Math.max(0.001, (Date.now() - previous.time) / 1000);
       if (speed === 0) speed = Math.round((deltaDistance / deltaSeconds) * 3.6);
-      if (deltaDistance >= 3) heading = computeBearing(previous.lat, previous.lon, point.lat, point.lon);
+      if (deltaDistance >= 3) {
+        heading = computeBearing(previous.lat, previous.lon, point.lat, point.lon);
+      }
     }
     prevPointRef.current = { ...point, time: Date.now() };
 
@@ -186,7 +185,10 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
 
     const distToNext =
       directionCumulative.length > 0
-        ? Math.max(0, (directionCumulative[stepIdx] || directionCumulative[directionCumulative.length - 1]) - traveled)
+        ? Math.max(
+            0,
+            (directionCumulative[stepIdx] || directionCumulative[directionCumulative.length - 1]) - traveled,
+          )
         : 0;
 
     const arrival = new Date(Date.now() + remainingTime * 1000);
@@ -265,28 +267,23 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
     watchIdRef.current = id;
   }, [updateNavigationState, navMode]);
 
-  // ── Simulation Ticker ──
   useEffect(() => {
-    if (navMode !== 'sim' || !isTracking || !polyline) return;
+    if (navMode !== 'sim' || !isTracking || !polyline) return undefined;
 
     const interval = setInterval(() => {
       setSimDist((prev) => {
-        const next = prev + (40 / 3.6); // 40 km/h in m/s
+        const next = prev + (40 / 3.6);
         if (next >= polyline.total) {
           clearInterval(interval);
           return polyline.total;
         }
 
-        // Interpolate position
-        let target = next;
-        let found = false;
         for (const segment of polyline.segments) {
-          if (target >= segment.cumulativeStart && target <= segment.cumulativeStart + segment.length) {
-            const segmentT = segment.length > 0 ? (target - segment.cumulativeStart) / segment.length : 0;
+          if (next >= segment.cumulativeStart && next <= segment.cumulativeStart + segment.length) {
+            const segmentT = segment.length > 0 ? (next - segment.cumulativeStart) / segment.length : 0;
             const lat = segment.start.lat + (segment.end.lat - segment.start.lat) * segmentT;
             const lon = segment.start.lon + (segment.end.lon - segment.start.lon) * segmentT;
-            updateNavigationState({ latitude: lat, longitude: lon, speed: 11.1 }); // 40kmh
-            found = true;
+            updateNavigationState({ latitude: lat, longitude: lon, speed: 11.1 });
             break;
           }
         }
@@ -308,6 +305,12 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
   }, [startTracking, stopTracking]);
 
   useEffect(() => {
+    if (!assistantSlot && panelTab === 'assistant') {
+      setPanelTab('details');
+    }
+  }, [assistantSlot, panelTab]);
+
+  useEffect(() => {
     if (isMuted || !isTracking || !directions[currentStepIdx]) return;
     if (currentStepIdx === lastSpokenStepRef.current) return;
 
@@ -323,6 +326,8 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
 
   const currentStep = directions[currentStepIdx];
   const nextStep = directions[currentStepIdx + 1];
+  const completionPercent = Math.round(progress * 100);
+  const visibleSteps = directions.slice(currentStepIdx);
 
   if (!route?.geometry?.coordinates || route.geometry.coordinates.length < 2) {
     return (
@@ -333,33 +338,39 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div
         style={{
-          padding: 14,
-          background: 'rgba(24, 76, 149, 0.9)',
+          padding: 16,
+          background: 'linear-gradient(180deg, rgba(24, 76, 149, 0.95), rgba(16, 48, 101, 0.92))',
           color: '#fff',
-          borderBottom: '1px solid var(--border)',
+          borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <Navigation style={{ width: 18, height: 18 }} />
-            <div style={{ fontSize: 13, display: 'flex', borderRadius: 6, background: 'rgba(0,0,0,0.2)', padding: 2 }}>
-              <button 
-                onClick={() => { stopTracking(); setNavMode('sim'); setSimDist(0); }}
-                style={{ 
-                  padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                  background: navMode === 'sim' ? '#fff' : 'transparent', color: navMode === 'sim' ? '#111' : '#fff'
-                }}>Simulate</button>
-              <button 
-                onClick={() => { stopTracking(); setNavMode('live'); }}
-                style={{ 
-                  padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                  background: navMode === 'live' ? '#fff' : 'transparent', color: navMode === 'live' ? '#111' : '#fff'
-                }}>Live GPS</button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 14,
+                background: 'rgba(255,255,255,0.14)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Navigation style={{ width: 18, height: 18 }} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#f8fafc' }}>Navigation</div>
+              <div style={{ fontSize: 12, color: 'rgba(226,232,240,0.8)' }}>
+                {route.summary || 'Current route'}
+              </div>
             </div>
           </div>
+
           <button
             onClick={() => {
               stopTracking();
@@ -370,155 +381,356 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
               border: 'none',
               background: 'rgba(255,255,255,0.15)',
               color: '#fff',
-              borderRadius: 8,
-              width: 30,
-              height: 30,
+              borderRadius: 10,
+              width: 34,
+              height: 34,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              flexShrink: 0,
             }}
           >
             <X style={{ width: 16, height: 16 }} />
           </button>
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.35 }}>
-          <div style={{ fontWeight: 600 }}>{currentStep?.instruction || 'Waiting for GPS update...'}</div>
-          <div style={{ opacity: 0.9, marginTop: 4 }}>
-            Next turn in {fmtDist(distanceToTurn)}
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ fontSize: 12, lineHeight: 1.5, color: '#dbeafe' }}>
+            {currentStep?.instruction || 'Waiting for GPS update...'}
           </div>
-          {nextStep && (
-            <div style={{ marginTop: 3, opacity: 0.85, fontSize: 12 }}>Then: {nextStep.instruction}</div>
-          )}
+
+          <div style={{ display: 'inline-flex', borderRadius: 10, background: 'rgba(0,0,0,0.24)', padding: 3, flexShrink: 0 }}>
+            <button
+              onClick={() => { stopTracking(); setNavMode('sim'); setSimDist(0); }}
+              style={{
+                padding: '7px 12px',
+                border: 'none',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 800,
+                background: navMode === 'sim' ? '#fff' : 'transparent',
+                color: navMode === 'sim' ? '#111' : '#fff',
+              }}
+            >
+              Simulate
+            </button>
+            <button
+              onClick={() => { stopTracking(); setNavMode('live'); }}
+              style={{
+                padding: '7px 12px',
+                border: 'none',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 800,
+                background: navMode === 'live' ? '#fff' : 'transparent',
+                color: navMode === 'live' ? '#111' : '#fff',
+              }}
+            >
+              Live GPS
+            </button>
+          </div>
         </div>
       </div>
 
-      {gpsError && (
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+        {[
+          { id: 'details', label: 'Route Details' },
+          { id: 'directions', label: 'Directions' },
+          ...(assistantSlot ? [{ id: 'assistant', label: 'AI Assistant' }] : []),
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setPanelTab(tab.id)}
+            style={{
+              flex: 1,
+              padding: '10px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              borderBottom: panelTab === tab.id ? '2px solid var(--blue)' : '2px solid transparent',
+              color: panelTab === tab.id ? 'var(--blue)' : 'var(--text-muted)',
+              transition: 'all 0.2s',
+              fontFamily: 'inherit',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div
           style={{
-            margin: 10,
-            padding: '10px 12px',
-            borderRadius: 8,
-            border: '1px solid rgba(239, 68, 68, 0.35)',
-            background: 'rgba(239, 68, 68, 0.08)',
-            color: '#fca5a5',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 12,
+            height: '100%',
+            minHeight: 0,
+            display: panelTab === 'details' ? 'flex' : 'none',
+            flexDirection: 'column',
           }}
         >
-          <AlertTriangle style={{ width: 14, height: 14 }} />
-          <span>{gpsError}</span>
-        </div>
-      )}
+          <div className="planner-navigation-scroll" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div
+              style={{
+                padding: 16,
+                borderRadius: 18,
+                border: '1px solid rgba(59,130,246,0.18)',
+                background: 'linear-gradient(180deg, rgba(37,99,235,0.14), rgba(15,23,42,0.82))',
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: '#93c5fd' }}>
+                Current maneuver
+              </div>
+              <div style={{ marginTop: 10, fontSize: 16, fontWeight: 700, color: '#f8fafc', lineHeight: 1.45 }}>
+                {currentStep?.instruction || 'Waiting for GPS update...'}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#cbd5e1' }}>
+                Next turn in {fmtDist(distanceToTurn)}
+              </div>
+              {nextStep && (
+                <div style={{ marginTop: 4, fontSize: 12, color: '#94a3b8' }}>
+                  Then: {nextStep.instruction}
+                </div>
+              )}
+            </div>
 
-      <div style={{ padding: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Remaining</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmtDist(remainDistance)}</div>
-        </div>
-        <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>ETA</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmtTime(remainTimeSeconds)}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{eta}</div>
-        </div>
-        <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Speed</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{speedKmh} km/h</div>
-        </div>
-        <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Traveled</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmtDist(elapsedDistance)}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{Math.round(progress * 100)}%</div>
-        </div>
-      </div>
+            {gpsError && (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 14,
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  color: '#fca5a5',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                }}
+              >
+                <AlertTriangle style={{ width: 14, height: 14, flexShrink: 0 }} />
+                <span>{gpsError}</span>
+              </div>
+            )}
 
-      <div style={{ padding: '0 10px 10px', display: 'flex', gap: 8 }}>
-        {isTracking ? (
-          <button
-            onClick={stopTracking}
-            style={{
-              flex: 1,
-              border: 'none',
-              borderRadius: 8,
-              padding: '10px 12px',
-              background: '#f59e0b',
-              color: '#111827',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-            }}
-          >
-            <Pause style={{ width: 16, height: 16 }} /> Pause GPS
-          </button>
-        ) : (
-          <button
-            onClick={startTracking}
-            style={{
-              flex: 1,
-              border: 'none',
-              borderRadius: 8,
-              padding: '10px 12px',
-              background: '#22c55e',
-              color: '#fff',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-            }}
-          >
-            <Play style={{ width: 16, height: 16 }} /> Start GPS
-          </button>
-        )}
+            <div className="planner-navigation-metrics">
+              {[
+                { label: 'Remaining', value: fmtDist(remainDistance), meta: route.summary || 'Current route' },
+                { label: 'ETA', value: fmtTime(remainTimeSeconds), meta: eta },
+                { label: 'Speed', value: `${speedKmh} km/h`, meta: navMode === 'live' ? 'Sensor/GPS' : 'Simulation' },
+                { label: 'Traveled', value: fmtDist(elapsedDistance), meta: `${completionPercent}% complete` },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    padding: 14,
+                    borderRadius: 16,
+                    background: 'var(--panel-alt)',
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{item.label}</div>
+                  <div style={{ marginTop: 6, fontSize: 22, fontWeight: 800, color: 'var(--text)' }}>{item.value}</div>
+                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-muted)' }}>{item.meta}</div>
+                </div>
+              ))}
+            </div>
 
-        <button
-          onClick={() => {
-            setIsMuted((prev) => !prev);
-            if (!isMuted && typeof window !== 'undefined' && window.speechSynthesis) {
-              window.speechSynthesis.cancel();
-            }
-          }}
-          title={isMuted ? 'Unmute voice' : 'Mute voice'}
-          style={{
-            width: 42,
-            border: 'none',
-            borderRadius: 8,
-            background: 'var(--panel-alt)',
-            color: isMuted ? '#f87171' : 'var(--text)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {isMuted ? <VolumeX style={{ width: 16, height: 16 }} /> : <Volume2 style={{ width: 16, height: 16 }} />}
-        </button>
-      </div>
+            <div
+              style={{
+                padding: 14,
+                borderRadius: 16,
+                border: '1px solid var(--border)',
+                background: 'rgba(255,255,255,0.02)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Trip progress</div>
+                <div style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700 }}>{completionPercent}%</div>
+              </div>
+              <div
+                style={{
+                  marginTop: 10,
+                  width: '100%',
+                  height: 10,
+                  borderRadius: 999,
+                  background: 'rgba(148,163,184,0.14)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${Math.min(100, Math.max(0, completionPercent))}%`,
+                    height: '100%',
+                    borderRadius: 999,
+                    background: 'linear-gradient(90deg, #2563eb, #0ea5e9)',
+                  }}
+                />
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                {fmtDist(totalDistance)} total distance • {fmtTime(totalDuration)} total duration
+              </div>
+            </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '0 10px 12px' }}>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', fontWeight: 600 }}>
-          Upcoming steps
-        </div>
-        {directions.slice(currentStepIdx).map((step, idx) => (
-          <div
-            key={`${step.instruction}-${idx}`}
-            style={{
-              padding: '8px 0',
-              borderBottom: '1px solid var(--border)',
-              opacity: idx === 0 ? 1 : 0.7,
-            }}
-          >
-            <div style={{ fontSize: 12, color: 'var(--text)' }}>{step.instruction}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{fmtDist(step.distance)}</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {isTracking ? (
+                <button
+                  onClick={stopTracking}
+                  style={{
+                    flex: 1,
+                    border: 'none',
+                    borderRadius: 14,
+                    padding: '12px 14px',
+                    background: '#f59e0b',
+                    color: '#111827',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <Pause style={{ width: 16, height: 16 }} /> Pause GPS
+                </button>
+              ) : (
+                <button
+                  onClick={startTracking}
+                  style={{
+                    flex: 1,
+                    border: 'none',
+                    borderRadius: 14,
+                    padding: '12px 14px',
+                    background: '#22c55e',
+                    color: '#fff',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <Play style={{ width: 16, height: 16 }} /> Start GPS
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  setIsMuted((prev) => !prev);
+                  if (!isMuted && typeof window !== 'undefined' && window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
+                  }
+                }}
+                title={isMuted ? 'Unmute voice' : 'Mute voice'}
+                style={{
+                  width: 48,
+                  border: '1px solid var(--border)',
+                  borderRadius: 14,
+                  background: 'var(--panel-alt)',
+                  color: isMuted ? '#f87171' : 'var(--text)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                {isMuted ? <VolumeX style={{ width: 16, height: 16 }} /> : <Volume2 style={{ width: 16, height: 16 }} />}
+              </button>
+            </div>
           </div>
-        ))}
+        </div>
+
+        <div
+          style={{
+            height: '100%',
+            minHeight: 0,
+            display: panelTab === 'directions' ? 'flex' : 'none',
+            flexDirection: 'column',
+          }}
+        >
+          <div className="planner-navigation-scroll">
+            <div
+              style={{
+                margin: 18,
+                padding: 16,
+                borderRadius: 18,
+                border: '1px solid rgba(148,163,184,0.12)',
+                background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(15,23,42,0.58))',
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: '#60a5fa' }}>
+                Current step
+              </div>
+              <div style={{ marginTop: 8, fontSize: 18, fontWeight: 800, color: '#f8fafc', lineHeight: 1.45 }}>
+                {currentStep?.instruction || 'Waiting for guidance'}
+              </div>
+              <div style={{ marginTop: 6, fontSize: 13, color: '#94a3b8' }}>
+                {fmtDist(currentStep?.distance || 0)} remaining in this maneuver
+              </div>
+            </div>
+
+            <div style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {visibleSteps.map((step, idx) => (
+                <div
+                  key={`${step.instruction}-${currentStepIdx + idx}`}
+                  className={`planner-navigation-step${idx === 0 ? ' planner-navigation-step--current' : ''}`}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span
+                          style={{
+                            padding: '3px 8px',
+                            borderRadius: 999,
+                            background: idx === 0 ? 'rgba(37,99,235,0.18)' : 'rgba(148,163,184,0.12)',
+                            color: idx === 0 ? '#93c5fd' : '#cbd5e1',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            textTransform: 'uppercase',
+                            letterSpacing: 0.4,
+                          }}
+                        >
+                          {idx === 0 ? 'Now' : idx === 1 ? 'Next' : `Step ${currentStepIdx + idx + 1}`}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: idx === 0 ? 700 : 600, color: '#f8fafc', lineHeight: 1.55 }}>
+                        {step.instruction}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#94a3b8', flexShrink: 0 }}>
+                      {fmtDist(step.distance)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            height: '100%',
+            minHeight: 0,
+            display: panelTab === 'assistant' ? 'flex' : 'none',
+            flexDirection: 'column',
+          }}
+        >
+          {assistantSlot ? (
+            <div style={{ flex: 1, minHeight: 0 }}>
+              {assistantSlot}
+            </div>
+          ) : (
+            <div className="planner-navigation-scroll" style={{ padding: 18, color: 'var(--text-muted)' }}>
+              Assistant unavailable for this route.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

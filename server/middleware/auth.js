@@ -1,23 +1,31 @@
-import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
+import { verifyAuthToken } from '../utils/auth.js';
 
-/**
- * JWT Authentication middleware
- * Extracts token from Authorization header and verifies it
- */
-export default function auth(req, res, next) {
+export default async function auth(req, res, next) {
   const authHeader = req.headers.authorization;
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, error: 'No token provided' });
+    return res.status(401).json({ success: false, error: 'Authentication token is required' });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return res.status(401).json({ success: false, error: 'Authentication token is required' });
+  }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'mapRouterAI2026SecretKey');
-    req.userId = decoded.id;
-    req.user = decoded;
-    next();
-  } catch {
+    const decoded = verifyAuthToken(token);
+    const user = await User.findById(decoded.sub);
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Session is no longer valid' });
+    }
+
+    req.user = user;
+    req.userId = user._id.toString();
+    req.token = token;
+    return next();
+  } catch (error) {
     return res.status(401).json({ success: false, error: 'Invalid or expired token' });
   }
 }

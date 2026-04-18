@@ -1,6 +1,16 @@
 import axios from 'axios';
+import { clearAuthSession, getStoredToken } from '../utils/authStorage';
 
 const API_BASE = '/api';
+const AUTH_FREE_PATHS = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/verify-email',
+  '/auth/resend-verification',
+  '/auth/logout',
+  '/auth/google',
+  '/health',
+];
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -9,12 +19,30 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('map_router_token');
+  const token = getStoredToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const requestPath = error?.config?.url || '';
+    const shouldBypassAuthReset = AUTH_FREE_PATHS.some((path) => requestPath.includes(path));
+
+    if (status === 401 && !shouldBypassAuthReset && getStoredToken()) {
+      clearAuthSession();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+      }
+    }
+
+    return Promise.reject(error);
+  },
+);
 
 export const optimizeRoute = (data) => api.post('/routes/optimize', data);
 export const refreshRoute = (data) => api.post('/routes/refresh', data);
@@ -53,9 +81,15 @@ export const saveTrafficPoints = (data) => api.post('/traffic', data);
 
 export const registerUser = (data) => api.post('/auth/register', data);
 export const loginUser = (data) => api.post('/auth/login', data);
+export const loginWithGoogleRequest = (idToken) => api.post('/auth/google', { idToken });
+export const verifyEmailToken = (token) => api.post('/auth/verify-email', { token });
+export const resendVerification = (email) => api.post('/auth/resend-verification', { email });
 export const getCurrentUser = () => api.get('/auth/me');
+export const updateProfile = (data) => api.put('/auth/profile', data);
+export const logoutUser = () => api.post('/auth/logout');
 
 export const getSavedPlaces = () => api.get('/saved');
+export const getSavedPlace = (id) => api.get(`/saved/${id}`);
 export const addSavedPlace = (data) => api.post('/saved', data);
 export const updateSavedPlace = (id, data) => api.put(`/saved/${id}`, data);
 export const deleteSavedPlace = (id) => api.delete(`/saved/${id}`);

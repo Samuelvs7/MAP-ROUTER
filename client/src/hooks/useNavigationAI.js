@@ -1,17 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { aiNavigationEvent, aiChat, getNearbyImages } from '../services/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { aiChat, aiNavigationEvent, getNearbyImages } from '../services/api';
 
 const TRAFFIC_CHECK_INTERVAL_MS = 15000;
+const TRAFFIC_ALERT_COOLDOWN_MS = 30000;
 
-/**
- * useNavigationAI — Automatic AI intelligence hook
- * 
- * Monitors navigation state and automatically triggers:
- * - Route analysis on route selection
- * - Image fetching on destination change
- * - Traffic monitoring during navigation
- * - Smart reroute suggestions (replaces window.confirm)
- */
 export default function useNavigationAI({
   source = null,
   destination = null,
@@ -28,7 +20,7 @@ export default function useNavigationAI({
       id: 'welcome',
       role: 'assistant',
       type: 'text',
-      text: "Hi! I'm your AI navigation co-pilot. I'll automatically monitor traffic, suggest better routes, and keep you informed throughout your trip.",
+      text: "I'm your navigation co-pilot. Ask about route tradeoffs, traffic, safer alternatives, or nearby stops anytime.",
       timestamp: Date.now(),
     },
   ]);
@@ -36,36 +28,40 @@ export default function useNavigationAI({
   const [isThinking, setIsThinking] = useState(false);
   const [pendingSuggestion, setPendingSuggestion] = useState(null);
 
+  const mountedRef = useRef(true);
   const lastAnalyzedRouteRef = useRef(null);
   const lastDestinationRef = useRef(null);
   const trafficMonitorRef = useRef(null);
   const lastTrafficAlertRef = useRef(0);
-  const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
-  const addMessage = useCallback((msg) => {
+  const addMessage = useCallback((message) => {
     if (!mountedRef.current) return;
-    setMessages((prev) => [...prev, {
-      ...msg,
-      id: `${msg.type || 'text'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: Date.now(),
-    }]);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        ...message,
+        id: `${message.type || 'text'}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: Date.now(),
+      },
+    ]);
   }, []);
 
-  // ── Auto-analyze on route selection ──
   useEffect(() => {
     if (!currentRoute || !destination) return;
 
-    const routeKey = `${destination.lat}-${destination.lon}-${currentRoute.index}`;
+    const routeKey = `${destination.lat}-${destination.lon}-${currentRoute.index}-${currentRoute.adjustedDuration || currentRoute.duration}`;
     if (routeKey === lastAnalyzedRouteRef.current) return;
     lastAnalyzedRouteRef.current = routeKey;
 
     const analyzeRoute = async () => {
-      if (!mountedRef.current) return;
       setIsThinking(true);
       try {
         const res = await aiNavigationEvent({
@@ -75,6 +71,7 @@ export default function useNavigationAI({
           source,
           destination,
           currentRoute,
+          allRoutes,
           trafficLevel: currentRoute.trafficLevel || trafficLevel || 'unknown',
           trafficScore: currentRoute.trafficScore || trafficScore,
           totalDurationSeconds: currentRoute.adjustedDuration || currentRoute.duration || 0,
@@ -83,26 +80,24 @@ export default function useNavigationAI({
         });
 
         if (!mountedRef.current) return;
-
-        const data = res.data;
-        if (data.analysis) {
-          addMessage({ role: 'assistant', type: 'text', text: data.analysis });
+        if (res.data?.analysis) {
+          addMessage({ role: 'assistant', type: 'text', text: res.data.analysis });
         }
 
-        if (data.images?.length > 0) {
-          setImages(data.images);
+        if (res.data?.images?.length > 0) {
+          setImages(res.data.images);
           addMessage({
             role: 'assistant',
             type: 'images',
-            text: `📸 Here are some street views near ${destination.name || 'your destination'}:`,
-            images: data.images,
+            text: `Street-level views near ${destination.name || 'your destination'}.`,
+            images: res.data.images,
           });
         }
       } catch {
         addMessage({
           role: 'assistant',
           type: 'text',
-          text: `Route set to ${destination.name || 'your destination'}. I'll keep an eye on things for you.`,
+          text: `Route ready for ${destination.name || 'your trip'}. I'll keep watching traffic and route quality.`,
         });
       } finally {
         if (mountedRef.current) setIsThinking(false);
@@ -110,44 +105,46 @@ export default function useNavigationAI({
     };
 
     analyzeRoute();
-  }, [currentRoute?.index, destination?.lat, destination?.lon]);
+  }, [
+    currentRoute,
+    destination,
+    source,
+    weather,
+    trafficLevel,
+    trafficScore,
+    addMessage,
+    allRoutes,
+  ]);
 
-  // ── Auto-fetch images when destination changes (separate from route) ──
   useEffect(() => {
     if (!destination?.lat || !destination?.lon) {
       setImages([]);
       return;
     }
 
-    const destKey = `${destination.lat}-${destination.lon}`;
-    if (destKey === lastDestinationRef.current) return;
-    lastDestinationRef.current = destKey;
+    const destinationKey = `${destination.lat}-${destination.lon}`;
+    if (destinationKey === lastDestinationRef.current) return;
+    lastDestinationRef.current = destinationKey;
 
-    // Images are fetched as part of route analysis above, so only fetch standalone if no route yet
     if (currentRoute) return;
 
     const fetchImages = async () => {
       try {
         const res = await getNearbyImages(destination.lat, destination.lon, 4);
         if (!mountedRef.current) return;
-        const imgs = res.data?.images || [];
-        if (imgs.length > 0) {
-          setImages(imgs);
-        }
+        setImages(res.data?.images || []);
       } catch {
-        // Silent fail for auto-fetch
+        // Soft failure.
       }
     };
 
     fetchImages();
-  }, [destination?.lat, destination?.lon, currentRoute]);
+  }, [destination, currentRoute]);
 
-  // ── Navigation started event ──
   useEffect(() => {
     if (!navigating || !source || !destination) return;
 
     const notifyStart = async () => {
-      if (!mountedRef.current) return;
       setIsThinking(true);
       try {
         const res = await aiNavigationEvent({
@@ -157,11 +154,14 @@ export default function useNavigationAI({
           source,
           destination,
           currentRoute,
+          allRoutes,
           trafficLevel: currentRoute?.trafficLevel || trafficLevel || 'unknown',
+          trafficScore: currentRoute?.trafficScore || trafficScore,
           totalDurationSeconds: currentRoute?.adjustedDuration || currentRoute?.duration || 0,
           totalDistanceMeters: currentRoute?.distance || 0,
           weather,
         });
+
         if (!mountedRef.current) return;
         if (res.data?.analysis) {
           addMessage({ role: 'assistant', type: 'text', text: res.data.analysis });
@@ -170,7 +170,7 @@ export default function useNavigationAI({
         addMessage({
           role: 'assistant',
           type: 'text',
-          text: "Navigation started! I'm monitoring traffic and will suggest better routes if I find any.",
+          text: "Navigation started. I'll keep tracking traffic and let you know when another route becomes clearly better.",
         });
       } finally {
         if (mountedRef.current) setIsThinking(false);
@@ -178,9 +178,18 @@ export default function useNavigationAI({
     };
 
     notifyStart();
-  }, [navigating]);
+  }, [
+    navigating,
+    source,
+    destination,
+    currentRoute,
+    weather,
+    trafficLevel,
+    trafficScore,
+    addMessage,
+    allRoutes,
+  ]);
 
-  // ── Traffic monitoring during navigation ──
   useEffect(() => {
     if (!navigating || !source || !destination || !currentRoute) {
       if (trafficMonitorRef.current) clearInterval(trafficMonitorRef.current);
@@ -190,15 +199,12 @@ export default function useNavigationAI({
     trafficMonitorRef.current = setInterval(async () => {
       if (!mountedRef.current) return;
 
-      const now = Date.now();
-      // Prevent spamming — at least 30s between traffic alerts
-      if (now - lastTrafficAlertRef.current < 30000) return;
-
       const level = currentRoute.trafficLevel || trafficLevel;
       const score = currentRoute.trafficScore || trafficScore;
+      const now = Date.now();
 
-      // Only send traffic alert if traffic is notable
       if (!level || (level === 'light' && score < 30)) return;
+      if (now - lastTrafficAlertRef.current < TRAFFIC_ALERT_COOLDOWN_MS) return;
 
       lastTrafficAlertRef.current = now;
 
@@ -208,14 +214,16 @@ export default function useNavigationAI({
           source,
           destination,
           currentRoute,
+          allRoutes,
           trafficLevel: level,
           trafficScore: score,
+          trafficDelaySeconds: currentRoute.trafficDelay || 0,
           totalDurationSeconds: currentRoute.adjustedDuration || currentRoute.duration || 0,
           totalDistanceMeters: currentRoute.distance || 0,
         });
 
         if (!mountedRef.current) return;
-        if (res.data?.analysis && (level === 'heavy' || score > 60)) {
+        if (res.data?.analysis && (level === 'heavy' || score > 55)) {
           addMessage({
             role: 'assistant',
             type: 'traffic-alert',
@@ -224,29 +232,34 @@ export default function useNavigationAI({
           });
         }
       } catch {
-        // Silent fail for background monitoring
+        // Background monitoring should stay quiet on failure.
       }
     }, TRAFFIC_CHECK_INTERVAL_MS);
 
     return () => clearInterval(trafficMonitorRef.current);
-  }, [navigating, source, destination, currentRoute, trafficLevel, trafficScore]);
+  }, [
+    navigating,
+    source,
+    destination,
+    currentRoute,
+    trafficLevel,
+    trafficScore,
+    addMessage,
+    allRoutes,
+  ]);
 
-  // ── Handle switch suggestion from backend ──
   useEffect(() => {
     if (!switchSuggestion?.requiresConfirmation) return;
 
-    const handleSuggestion = async () => {
-      if (!mountedRef.current) return;
+    const askForSwitch = async () => {
       setIsThinking(true);
-
-      const timeSavedMin = Math.max(1, Math.round((switchSuggestion.timeSaved || 0) / 60));
-
       try {
         const res = await aiNavigationEvent({
           event: 'reroute_available',
           source,
           destination,
           currentRoute,
+          allRoutes,
           trafficLevel: currentRoute?.trafficLevel || trafficLevel || 'heavy',
           trafficScore: currentRoute?.trafficScore || trafficScore,
           timeSavedSeconds: switchSuggestion.timeSaved || 0,
@@ -256,34 +269,39 @@ export default function useNavigationAI({
 
         if (!mountedRef.current) return;
 
-        const aiText = res.data?.analysis || switchSuggestion.message ||
-          `There's heavy traffic ahead. I found a faster route that saves about ${timeSavedMin} minutes. Would you like me to switch?`;
-
         addMessage({
           role: 'assistant',
           type: 'switch-suggestion',
-          text: aiText,
+          text: res.data?.analysis || switchSuggestion.message,
           suggestion: switchSuggestion,
         });
-
-        setPendingSuggestion(switchSuggestion);
       } catch {
         addMessage({
           role: 'assistant',
           type: 'switch-suggestion',
-          text: switchSuggestion.message || `Heavy traffic detected. A faster route saves ~${timeSavedMin} minutes. Want me to switch?`,
+          text: switchSuggestion.message || 'I found a faster route. Do you want me to switch?',
           suggestion: switchSuggestion,
         });
-        setPendingSuggestion(switchSuggestion);
       } finally {
-        if (mountedRef.current) setIsThinking(false);
+        if (mountedRef.current) {
+          setPendingSuggestion(switchSuggestion);
+          setIsThinking(false);
+        }
       }
     };
 
-    handleSuggestion();
-  }, [switchSuggestion?.proposedRouteIndex, switchSuggestion?.timeSaved]);
+    askForSwitch();
+  }, [
+    switchSuggestion,
+    source,
+    destination,
+    currentRoute,
+    trafficLevel,
+    trafficScore,
+    addMessage,
+    allRoutes,
+  ]);
 
-  // ── User sends a message ──
   const sendMessage = useCallback(async (text) => {
     const trimmed = String(text || '').trim();
     if (!trimmed || isThinking) return;
@@ -295,39 +313,63 @@ export default function useNavigationAI({
       const res = await aiChat(trimmed, {
         source,
         destination,
+        currentRoute,
+        allRoutes,
         trafficLevel: currentRoute?.trafficLevel || trafficLevel || 'unknown',
+        trafficScore: currentRoute?.trafficScore || trafficScore || 0,
+        trafficDelaySeconds: currentRoute?.trafficDelay || 0,
         weather,
         totalDurationSeconds: currentRoute?.adjustedDuration || currentRoute?.duration || 0,
         totalDistanceMeters: currentRoute?.distance || 0,
-        latestSearchSummary: '',
       });
+
       if (!mountedRef.current) return;
-      const reply = res.data?.reply || 'I couldn\'t process that right now. Please try again.';
-      addMessage({ role: 'assistant', type: 'text', text: reply });
-    } catch {
+
+      const data = res.data || {};
+      const reply = data.reply || "I couldn't process that right now. Please try again.";
+
+      if (data.hasImages && data.images?.length > 0) {
+        setImages(data.images);
+        addMessage({ role: 'assistant', type: 'images', text: reply, images: data.images });
+      } else {
+        addMessage({ role: 'assistant', type: 'text', text: reply });
+      }
+    } catch (error) {
+      console.error('AI chat error:', error);
       addMessage({
         role: 'assistant',
         type: 'text',
-        text: 'Sorry, I\'m having trouble connecting. Please try again in a moment.',
+        text: 'I hit a connection issue while checking your route context. Please try again in a moment.',
       });
     } finally {
       if (mountedRef.current) setIsThinking(false);
     }
-  }, [source, destination, currentRoute, trafficLevel, weather, isThinking, addMessage]);
+  }, [
+    isThinking,
+    addMessage,
+    source,
+    destination,
+    currentRoute,
+    allRoutes,
+    trafficLevel,
+    trafficScore,
+    weather,
+  ]);
 
-  // ── Accept/Dismiss route switch ──
   const acceptSuggestion = useCallback(() => {
     if (!pendingSuggestion) return null;
+
     addMessage({
       role: 'user',
       type: 'text',
-      text: '✅ Yes, switch to the faster route.',
+      text: 'Yes, switch me to the faster route.',
     });
     addMessage({
       role: 'assistant',
       type: 'text',
-      text: 'Done! I\'ve switched you to the faster route. Happy navigating! 🚗',
+      text: "Done. I've switched to the faster route and will keep monitoring the trip from here.",
     });
+
     const suggestion = pendingSuggestion;
     setPendingSuggestion(null);
     return suggestion;
@@ -337,12 +379,12 @@ export default function useNavigationAI({
     addMessage({
       role: 'user',
       type: 'text',
-      text: '❌ No thanks, keep current route.',
+      text: 'Keep the current route for now.',
     });
     addMessage({
       role: 'assistant',
       type: 'text',
-      text: 'Got it, keeping your current route. I\'ll continue monitoring and let you know if conditions change.',
+      text: "Understood. I'll keep watching the route and let you know if conditions change again.",
     });
     setPendingSuggestion(null);
   }, [addMessage]);

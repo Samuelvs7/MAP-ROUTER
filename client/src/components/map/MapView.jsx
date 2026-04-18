@@ -22,15 +22,15 @@ import { addSavedPlace } from '../../services/api';
    ══════════════════════════════════════════════ */
 const MAP_STYLES = {
   standard: {
-    label: 'Map',
+    label: 'Standard',
     style: {
       version: 8,
       sources: {
         osm: {
           type: 'raster',
-          tiles: ['https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'],
+          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
           tileSize: 256,
-          attribution: '© Google Maps',
+          attribution: '© OpenStreetMap contributors',
           maxzoom: 19,
         },
       },
@@ -61,31 +61,31 @@ const MAP_STYLES = {
     style: {
       version: 8,
       sources: {
-        sat: {
+        satellite: {
           type: 'raster',
-          tiles: ['https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'],
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
           tileSize: 256,
-          attribution: '© Google Satellite',
-          maxzoom: 20,
+          attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EBP, and the GIS User Community',
+          maxzoom: 19,
         },
       },
-      layers: [{ id: 'sat-tiles', type: 'raster', source: 'sat' }],
+      layers: [{ id: 'sat-tiles', type: 'raster', source: 'satellite' }],
     },
   },
-  hybrid: {
-    label: 'Hybrid',
+  voyager: {
+    label: 'Voyager',
     style: {
       version: 8,
       sources: {
-        hyb: {
+        voyager: {
           type: 'raster',
-          tiles: ['https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'],
+          tiles: ['https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'],
           tileSize: 256,
-          attribution: '© Google Hybrid',
-          maxzoom: 20,
+          attribution: '© OpenStreetMap contributors © CARTO',
+          maxzoom: 19,
         },
       },
-      layers: [{ id: 'hyb-tiles', type: 'raster', source: 'hyb' }],
+      layers: [{ id: 'voyager-tiles', type: 'raster', source: 'voyager' }],
     },
   },
 };
@@ -121,6 +121,46 @@ function getDistanceKM(lat1, lon1, lat2, lon2) {
 function coordsToGeoJSON(positions) {
   // positions = [[lat,lon], ...]  → GeoJSON [[lon,lat], ...]
   return positions.map(([lat, lon]) => [lon, lat]);
+}
+
+function createCirclePolygon(lon, lat, radiusKm, steps = 48) {
+  const points = [];
+  const angularDistance = radiusKm / 6371;
+  const latRad = (lat * Math.PI) / 180;
+  const lonRad = (lon * Math.PI) / 180;
+
+  for (let step = 0; step <= steps; step += 1) {
+    const bearing = (step / steps) * Math.PI * 2;
+    const destLat = Math.asin(
+      Math.sin(latRad) * Math.cos(angularDistance) +
+      Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearing),
+    );
+    const destLon = lonRad + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
+      Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(destLat),
+    );
+
+    points.push([
+      ((destLon * 180) / Math.PI + 540) % 360 - 180,
+      (destLat * 180) / Math.PI,
+    ]);
+  }
+
+  return points;
+}
+
+function zoneToFeature(zone) {
+  return {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [createCirclePolygon(zone.lon, zone.lat, zone.radiusKm)],
+    },
+    properties: {
+      ...zone,
+      fillOpacity: zone.opacity || 0.18,
+    },
+  };
 }
 
 function makePinHTML(color, label = '') {
@@ -488,7 +528,6 @@ export default function MapView({
         deceleration: 2500,
         linearity: 0.2,
         maxSpeed: 1400,
-        deceleration: 2500,
       },
       pitchWithRotate: false,
       dragRotate: false,
@@ -620,16 +659,37 @@ export default function MapView({
       // ── Traffic Zones ──
       map.addLayer({
         id: 'traffic-zones-fill',
-        type: 'circle',
+        type: 'fill',
         source: 'traffic-zones',
         paint: {
-          'circle-radius': ['get', 'radiusMeters'],
-          'circle-radius-transition': { duration: 0 },
-          'circle-color': ['get', 'color'],
-          'circle-opacity': ['get', 'opacity'],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': ['get', 'color'],
-          'circle-stroke-opacity': 0.4,
+          'fill-color': ['get', 'color'],
+          'fill-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            3, 0.02,
+            6, ['*', ['get', 'fillOpacity'], 0.35],
+            10, ['*', ['get', 'fillOpacity'], 0.75],
+            14, ['get', 'fillOpacity'],
+          ],
+        },
+      });
+      map.addLayer({
+        id: 'traffic-zones-outline',
+        type: 'line',
+        source: 'traffic-zones',
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            4, 0.5,
+            9, 1,
+            14, 2,
+          ],
+          'line-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            4, 0.15,
+            9, 0.3,
+            14, 0.55,
+          ],
         },
       });
 
@@ -716,18 +776,37 @@ export default function MapView({
       addIfMissing('traffic-zones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       addLayerIfMissing({
         id: 'traffic-zones-fill',
-        type: 'circle',
+        type: 'fill',
         source: 'traffic-zones',
         paint: {
-          'circle-radius': [
-            'interpolate', ['exponential', 2], ['zoom'],
-            0, 0,
-            20, ['*', ['get', 'radiusMeters'], 1] // This is complex in MapLibre for meters, usually use meter-to-pixel ratio
+          'fill-color': ['get', 'color'],
+          'fill-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            3, 0.02,
+            6, ['*', ['get', 'fillOpacity'], 0.35],
+            10, ['*', ['get', 'fillOpacity'], 0.75],
+            14, ['get', 'fillOpacity'],
           ],
-          'circle-color': ['get', 'color'],
-          'circle-opacity': ['get', 'opacity'],
-          'circle-stroke-width': 1,
-          'circle-stroke-color': ['get', 'color'],
+        }
+      });
+      addLayerIfMissing({
+        id: 'traffic-zones-outline',
+        type: 'line',
+        source: 'traffic-zones',
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            4, 0.5,
+            9, 1,
+            14, 2,
+          ],
+          'line-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            4, 0.15,
+            9, 0.3,
+            14, 0.55,
+          ],
         }
       });
     });
@@ -802,17 +881,7 @@ export default function MapView({
 
     // Update traffic zones
     if (map.getSource('traffic-zones')) {
-      const zoneFeatures = trafficEnabled ? (state.trafficZones || []).map(z => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [z.lon, z.lat] },
-        properties: {
-          ...z,
-          radiusMeters: z.radiusKm * 1000,
-          // Hack for MapLibre circle radius in meters:
-          // circle-radius = radius_in_meters / (meters_per_pixel_at_latitude)
-          // Simplified: radius_in_pixels = radius_in_meters / (78271.484 * cos(lat) / 2^zoom)
-        }
-      })) : [];
+      const zoneFeatures = trafficEnabled ? (state.trafficZones || []).map(zoneToFeature) : [];
       map.getSource('traffic-zones').setData({ type: 'FeatureCollection', features: zoneFeatures });
     }
 

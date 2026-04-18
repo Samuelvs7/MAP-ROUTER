@@ -1,14 +1,55 @@
 .login-container {
-  min-height: 100vh;
-  width: 100%;
   display: flex;
+  min-height: 100vh;
+  width: 100vw;
+  background: #0f1117;
+  color: #e4e6ed;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+}
+
+.login-sidebar {
+  width: 100%;
+  max-width: 480px;
+  background: #1a1d27; /* Matches var(--panel) in map router */
+  border-right: 1px solid #2a2d3a; /* Matches var(--border) in map router */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2.5rem;
+  z-index: 10;
+  position: relative;
+  overflow-y: auto;
+  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.4);
+}
+
+.login-right-pane {
+  flex: 1;
+  position: relative;
+  display: none; /* Mobile hidden by default */
   align-items: center;
   justify-content: center;
-  background-color: #020617;
-  color: #f8fafc;
-  position: relative;
+  background: #020617;
   overflow: hidden;
-  padding: 2rem;
+}
+
+@media (min-width: 768px) {
+  .login-right-pane {
+    display: flex;
+  }
+}
+
+.right-pane-content {
+  position: relative;
+  z-index: 10;
+  text-align: left;
+  max-width: 400px;
+  background: rgba(15, 17, 23, 0.6);
+  padding: 2.5rem;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
 }
 
 /* Background elements */
@@ -48,20 +89,17 @@
 
 .login-card-wrapper {
   width: 100%;
-  max-width: 440px;
-  position: relative;
-  z-index: 10;
+  max-width: 400px;
+  margin: 0 auto;
 }
 
 .login-card {
-  background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(28px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 24px;
-  padding: 3rem 2.5rem;
-  box-shadow: 
-    0 25px 50px -12px rgba(0, 0, 0, 0.5),
-    inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  background: transparent;
+  backdrop-filter: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }
 
 .login-header {
@@ -109,7 +147,7 @@
 }
 
 .login-logo h1 {
-  font-size: 1.75rem;
+  font-size: 1.5rem;
   font-weight: 800;
   letter-spacing: -0.025em;
   margin: 0;
@@ -125,8 +163,8 @@
 
 .login-subtitle {
   color: #94a3b8;
-  font-size: 0.9375rem;
-  max-width: 240px;
+  font-size: 0.875rem;
+  max-width: 280px;
   margin: 0 auto;
 }
 
@@ -143,7 +181,7 @@
 }
 
 .input-group label {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: #94a3b8;
   padding-left: 0.25rem;
@@ -168,10 +206,10 @@
   width: 100%;
   background: rgba(30, 41, 59, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 14px;
-  padding: 0.75rem 1rem 0.75rem 2.8rem;
+  border-radius: 12px;
+  padding: 0.625rem 1rem 0.625rem 2.5rem;
   color: #fff;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   transition: all 0.2s ease;
 }
 
@@ -191,9 +229,9 @@
   background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
   color: white;
   border: none;
-  border-radius: 14px;
-  padding: 0.875rem;
-  font-size: 1rem;
+  border-radius: 12px;
+  padding: 0.75rem;
+  font-size: 0.9rem;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -220,6 +258,56 @@
   transform: none;
 }
 
+/* ── Google Sign-In ──────────────────────────────────── */
+.google-signin-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.875rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  color: #f1f5f9;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 1.5rem;
+}
+
+.google-signin-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.google-signin-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Email/Google divider ────────────────────────────── */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  color: #475569;
+  font-size: 0.8125rem;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* ── Footer ─────────────────────────────────────────── */
 .login-footer {
   margin-top: 2rem;
   text-align: center;
@@ -247,9 +335,8 @@
 .login-features {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 2.5rem;
-  padding: 0 1rem;
+  gap: 1rem;
+  margin-top: 1.5rem;
 }
 
 .feature-item {

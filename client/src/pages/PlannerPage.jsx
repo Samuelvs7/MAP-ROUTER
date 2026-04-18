@@ -1,9 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Search, MapPin, Plus, X, Loader2, Navigation, ChevronRight, Clock, Route as RouteIcon, ArrowRight, CornerDownRight, CornerUpRight, TrendingUp, RotateCcw, Play, Crosshair, Grip } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRoute } from '../context/RouteContext';
-import { optimizeRoute, refreshRoute, optimizeMultiStop, geocodePlace, saveHistory } from '../services/api';
+import { optimizeRoute, refreshRoute, optimizeMultiStop, geocodePlace, saveHistory, getHistory } from '../services/api';
 import MapView from '../components/map/MapView';
 import NavigationPanel from '../components/NavigationPanel';
 import AIAssistantPanel from '../components/AIAssistantPanel';
@@ -123,6 +124,7 @@ function DirectionStep({ step, idx, isLast }) {
 function AIAssistantPanelWrapper({
   source, destination, currentRoute, navigating, weather, allRoutes,
   latestSwitchSuggestion, onAcceptSwitch, onDismissSwitch,
+  variant = 'grid',
 }) {
   const ai = useNavigationAI({
     source,
@@ -155,6 +157,12 @@ function AIAssistantPanelWrapper({
       onSendMessage={ai.sendMessage}
       onAcceptSwitch={handleAccept}
       onDismissSwitch={handleDismiss}
+      variant={variant}
+      source={source}
+      destination={destination}
+      currentRoute={currentRoute}
+      weather={weather}
+      navigating={navigating}
     />
   );
 }
@@ -164,6 +172,7 @@ function AIAssistantPanelWrapper({
    ══════════════════════════════════════════════ */
 export default function PlannerPage() {
   const { state, dispatch } = useRoute();
+  const { routeId } = useParams(); // Dynamic routing: /planner/:routeId
   const [stops, setStops] = useState([]);
   const [multiResult, setMultiResult] = useState(null);
   const [multiLoading, setMultiLoading] = useState(false);
@@ -176,6 +185,7 @@ export default function PlannerPage() {
   const [userLocation, setUserLocation] = useState(null);
   // Panel collapsed on mobile
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   // Auto-recalculate flag
   const autoRecalcRef = useRef(false);
   // Dynamic refresh
@@ -184,13 +194,52 @@ export default function PlannerPage() {
   const [latestSwitchSuggestion, setLatestSwitchSuggestion] = useState(null);
 
   const isMultiStop = stops.length > 0;
+  const selectedRoute = state.routes.find((route) => route.index === state.selectedRouteIndex) || null;
+  const activeRoute = directionsRoute || selectedRoute || state.routes[0] || null;
+  const showAssistantColumn = !navigating && assistantOpen;
+
+  // ── Dynamic Route Loading: restore route from history via URL param ──
+  useEffect(() => {
+    if (!routeId) return;
+
+    const loadRouteFromHistory = async () => {
+      try {
+        const res = await getHistory();
+        const history = res.data?.history || [];
+        const entry = history.find((h) => h._id === routeId);
+        if (!entry) { return; }
+
+        // Restore source/destination from history entry
+        if (entry.source) dispatch({ type: 'SET_SOURCE', payload: entry.source });
+        if (entry.destination) dispatch({ type: 'SET_DESTINATION', payload: entry.destination });
+        if (entry.preference) dispatch({ type: 'SET_PREFERENCE', payload: entry.preference });
+
+        // Auto-calculate after restoring
+        if (entry.source && entry.destination) {
+          autoRecalcRef.current = true;
+        }
+
+        toast.success('Route loaded from history 📍', { duration: 2500 });
+      } catch {
+        // Silently ignore — route might not exist yet
+      }
+    };
+
+    loadRouteFromHistory();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId]);
 
   // ── Dynamic Refresh (every 20 sec) ──
   useEffect(() => {
     if (autoRefresh && state.source && state.destination && state.routes.length > 0 && !isMultiStop) {
       refreshIntervalRef.current = setInterval(async () => {
         try {
-          const res = await refreshRoute({ source: state.source, destination: state.destination, preference: state.preference });
+          const res = await refreshRoute({
+            source: state.source,
+            destination: state.destination,
+            preference: state.preference,
+            currentRouteIndex: state.selectedRouteIndex,
+          });
           dispatch({ type: 'SET_RESULTS', payload: res.data });
           setDirectionsRoute(res.data.routes[0]);
           toast.success('🔄 Route refreshed (traffic updated)', { duration: 2000 });
@@ -206,26 +255,55 @@ export default function PlannerPage() {
 
   const handlePositionUpdate = useCallback((pos) => { setNavPosition(pos); }, []);
 
+  const handleAssistantAccept = useCallback((suggestion) => {
+    const nextRoute = state.routes.find((route) => route.index === suggestion?.proposedRouteIndex);
+    if (nextRoute) {
+      dispatch({ type: 'SELECT_ROUTE', payload: suggestion.proposedRouteIndex });
+      setDirectionsRoute(nextRoute);
+      toast.success('Switched to faster route!');
+    }
+    setLatestSwitchSuggestion(null);
+  }, [dispatch, state.routes]);
+
+  const handleAssistantDismiss = useCallback(() => {
+    setLatestSwitchSuggestion(null);
+  }, []);
+
   const startNavigation = useCallback(() => {
-    const route = directionsRoute || state.routes[state.selectedRouteIndex || 0];
+    const route = activeRoute;
     if (!route?.geometry?.coordinates) return toast.error('Find a route first');
     setDirectionsRoute(route);
     setNavigating(true);
-  }, [directionsRoute, state.routes, state.selectedRouteIndex]);
+  }, [activeRoute]);
 
   // ── Find Route (A → B) ──
   const handleFindRoute = useCallback(async () => {
     if (!state.source || !state.destination) return toast.error('Enter source and destination');
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      const res = await optimizeRoute({ source: state.source, destination: state.destination, preference: state.preference });
+      const res = await optimizeRoute({
+        source: state.source,
+        destination: state.destination,
+        preference: state.preference,
+        currentRouteIndex: state.selectedRouteIndex,
+      });
       dispatch({ type: 'SET_RESULTS', payload: res.data });
       setDirectionsRoute(res.data.routes[0]);
       setTab('routes');
       setNavigating(false);
       setNavPosition(null);
       toast.success(`${res.data.routes.length} route${res.data.routes.length > 1 ? 's' : ''} found`);
-      try { await saveHistory({ source: state.source, destination: state.destination, preference: state.preference, selectedRoute: res.data.routes[0] }); } catch {}
+      try {
+        await saveHistory({
+          source: state.source,
+          destination: state.destination,
+          preference: state.preference,
+          selectedRoute: res.data.routes[0],
+          alternativeRoutes: res.data.routes.slice(1, 3),
+          weatherCondition: res.data.weather?.condition || '',
+          aiExplanation: res.data.explanation?.summary || '',
+        });
+      } catch {}
     } catch (err) {
       dispatch({ type: 'SET_ERROR', payload: err.response?.data?.error || err.message });
       toast.error(err.response?.data?.error || 'Failed to find routes');
@@ -356,55 +434,42 @@ export default function PlannerPage() {
   }, []);
 
   return (
-    <div style={{ height: 'calc(100vh - 48px)', display: 'flex', overflow: 'hidden' }}>
+    <div className="planner-layout" style={{ height: 'calc(100vh - 48px)', display: 'flex', overflow: 'hidden' }}>
       {/* ══════════════════════════════════════════════
           LEFT PANEL
          ══════════════════════════════════════════════ */}
-      <div style={{
-        width: panelCollapsed ? 0 : 370, flexShrink: 0, background: 'var(--panel)',
+      <div className="planner-side-panel" style={{
+        width: panelCollapsed ? 0 : navigating ? 'min(420px, 100%)' : undefined, flexShrink: 0, background: 'var(--panel)',
         borderRight: panelCollapsed ? 'none' : '1px solid var(--border)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        transition: 'width 0.3s ease',
       }}>
 
-        {/* If navigating, show NavigationPanel + AI below */}
-        {navigating && directionsRoute ? (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <NavigationPanel
-                route={directionsRoute}
-                onPositionUpdate={handlePositionUpdate}
-                onClose={() => { setNavigating(false); setNavPosition(null); }}
-              />
-            </div>
-            {/* AI Co-Pilot during navigation */}
-            <div style={{ height: 220, borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+        {/* If navigating, show tabbed navigation panel */}
+        {navigating && activeRoute ? (
+          <NavigationPanel
+            route={activeRoute}
+            onPositionUpdate={handlePositionUpdate}
+            onClose={() => { setNavigating(false); setNavPosition(null); }}
+            assistantSlot={(
               <AIAssistantPanelWrapper
                 source={state.source}
                 destination={state.destination}
-                currentRoute={directionsRoute}
+                currentRoute={activeRoute}
                 navigating={navigating}
                 weather={state.weather}
                 allRoutes={state.routes}
                 latestSwitchSuggestion={latestSwitchSuggestion}
-                onAcceptSwitch={(suggestion) => {
-                  const nextRoute = state.routes.find((r) => r.index === suggestion.proposedRouteIndex);
-                  if (nextRoute) {
-                    dispatch({ type: 'SELECT_ROUTE', payload: suggestion.proposedRouteIndex });
-                    setDirectionsRoute(nextRoute);
-                    toast.success('Switched to faster route!');
-                  }
-                  setLatestSwitchSuggestion(null);
-                }}
-                onDismissSwitch={() => setLatestSwitchSuggestion(null)}
+                variant="compact"
+                onAcceptSwitch={handleAssistantAccept}
+                onDismissSwitch={handleAssistantDismiss}
               />
-            </div>
-          </div>        ) : (
+            )}
+          />
+        ) : (
           <>
             {/* Search Section — Hidden if AI Assistant is full-screen toggle */}
-            {tab !== 'assistant' && (
-              <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
+            <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
                   {/* Locations column */}
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <LocationInput placeholder="Start location..." value={state.source}
@@ -501,7 +566,6 @@ export default function PlannerPage() {
                   💡 Right-click on map to set points · Drag pins to move
                 </div>
               </div>
-            )}
 
             {/* Results Tabs — Always visible for AI Assistant */}
             {true && (
@@ -510,7 +574,6 @@ export default function PlannerPage() {
                   { id: 'routes', label: 'Routes' },
                   { id: 'directions', label: 'Directions' },
                   ...(multiResult ? [{ id: 'multi', label: 'Optimization' }] : []),
-                  { id: 'assistant', label: 'AI Assistant' },
                 ].map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)}
                     style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 500, border: 'none', background: 'none',
@@ -519,11 +582,17 @@ export default function PlannerPage() {
                     {t.label}
                   </button>
                 ))}
+                <button type="button" onClick={() => setAssistantOpen((open) => !open)}
+                  style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 500, border: 'none', background: 'none',
+                    cursor: 'pointer', borderBottom: assistantOpen ? '2px solid var(--blue)' : '2px solid transparent',
+                    color: assistantOpen ? 'var(--blue)' : 'var(--text-muted)', transition: 'all 0.2s', fontFamily: 'inherit' }}>
+                  AI Assistant
+                </button>
               </div>
             )}
 
             {/* Tab Content */}
-            <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12 }}>
               {/* Routes Tab */}
               {tab === 'routes' && state.routes.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -601,12 +670,12 @@ export default function PlannerPage() {
               )}
 
               {/* Directions Tab */}
-              {tab === 'directions' && directionsRoute?.directions && (
+              {tab === 'directions' && activeRoute?.directions && (
                 <div>
                   <div style={{ padding: 10, borderRadius: 8, background: 'var(--blue-dim)', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{fmtTime(directionsRoute.duration)}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{fmtDist(directionsRoute.distance)}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{fmtTime(activeRoute.duration)}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{fmtDist(activeRoute.distance)}</div>
                     </div>
                     <button onClick={startNavigation}
                       style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: '#34a853',
@@ -615,8 +684,8 @@ export default function PlannerPage() {
                     </button>
                   </div>
                   <div>
-                    {directionsRoute.directions.map((step, i) => (
-                      <DirectionStep key={i} step={step} idx={i} isLast={i === directionsRoute.directions.length - 1} />
+                    {activeRoute.directions.map((step, i) => (
+                      <DirectionStep key={i} step={step} idx={i} isLast={i === activeRoute.directions.length - 1} />
                     ))}
                   </div>
                 </div>
@@ -695,31 +764,8 @@ export default function PlannerPage() {
                 </div>
               )}
 
-              {/* AI Assistant Tab */}
-              {tab === 'assistant' && (
-                <AIAssistantPanelWrapper
-                  source={state.source}
-                  destination={state.destination}
-                  currentRoute={directionsRoute}
-                  navigating={navigating}
-                  weather={state.weather}
-                  allRoutes={state.routes}
-                  latestSwitchSuggestion={latestSwitchSuggestion}
-                  onAcceptSwitch={(suggestion) => {
-                    const nextRoute = state.routes.find((r) => r.index === suggestion.proposedRouteIndex);
-                    if (nextRoute) {
-                      dispatch({ type: 'SELECT_ROUTE', payload: suggestion.proposedRouteIndex });
-                      setDirectionsRoute(nextRoute);
-                      toast.success('Switched to faster route!');
-                    }
-                    setLatestSwitchSuggestion(null);
-                  }}
-                  onDismissSwitch={() => setLatestSwitchSuggestion(null)}
-                />
-              )}
-
               {/* Empty state */}
-              {tab !== 'assistant' && state.routes.length === 0 && !multiResult && !state.loading && !multiLoading && (
+              {state.routes.length === 0 && !multiResult && !state.loading && !multiLoading && (
                 <div style={{ textAlign: 'center', paddingTop: 40 }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>🗺️</div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-dim)' }}>Plan your route</div>
@@ -769,7 +815,7 @@ export default function PlannerPage() {
       {/* ══════════════════════════════════════════════
           MAP AREA
          ══════════════════════════════════════════════ */}
-      <div style={{ flex: 1, position: 'relative' }}>
+      <div className="planner-map-column" style={{ flex: 1, position: 'relative' }}>
         <MapView
           stops={stops.filter(s => s.lat)}
           multiResult={multiResult}
@@ -784,6 +830,32 @@ export default function PlannerPage() {
           userLocation={userLocation}
         />
       </div>
+
+      {showAssistantColumn && (
+        <aside className="planner-assistant-column">
+          <button
+            type="button"
+            className="planner-assistant-column__close"
+            onClick={() => setAssistantOpen(false)}
+          >
+            Close
+          </button>
+          <div className="planner-assistant-column__content">
+            <AIAssistantPanelWrapper
+              source={state.source}
+              destination={state.destination}
+              currentRoute={activeRoute}
+              navigating={navigating}
+              weather={state.weather}
+              allRoutes={state.routes}
+              latestSwitchSuggestion={latestSwitchSuggestion}
+              variant="grid"
+              onAcceptSwitch={handleAssistantAccept}
+              onDismissSwitch={handleAssistantDismiss}
+            />
+          </div>
+        </aside>
+      )}
     </div>
   );
 }

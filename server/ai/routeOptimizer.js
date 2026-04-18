@@ -23,6 +23,7 @@ import {
   listRecentTraffic,
   buildTrafficZones,
 } from '../services/trafficPersistenceService.js';
+import { getTrafficZones, analyzeRoutesTraffic } from './trafficSimulator.js';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SUGGESTION_COOLDOWN_MS = 10000;
@@ -154,47 +155,41 @@ export async function optimizeRoute({
 
     console.log(`   Traffic predicted: ${trafficLevel} (score ${trafficScore}, source: ${trafficSource})`);
   } catch (e) {
-    console.log(`   Traffic prediction failed, using safe fallback: ${e.message}`);
-    const trafficLevel = 'moderate';
-    const trafficScore = 50;
-    const trafficSource = 'fallback';
-    const trafficMultiplier = 1.18;
-    routesWithTraffic = routes.map((route) => {
-      const adjustedDuration = Math.round(route.duration * trafficMultiplier);
-      const trafficDelay = Math.max(0, adjustedDuration - route.duration);
-      return {
-        ...route,
-        trafficLevel,
-        trafficScore,
-        trafficSource,
-        trafficMultiplier,
-        trafficDelay,
-        adjustedDuration,
+    console.log(`   Traffic prediction failed, using spatial traffic simulator: ${e.message}`);
+    // Fallback to spatial traffic simulator
+    routesWithTraffic = analyzeRoutesTraffic(routes, source.lat, source.lon, destination.lat, destination.lon);
+    
+    // Default to the primary route's traffic scores
+    const primary = routesWithTraffic[0];
+    if (primary) {
+      trafficPrediction = {
+        level: primary.trafficLevel.toUpperCase(),
+        score: primary.trafficScore || (primary.trafficMultiplier > 1.3 ? 80 : 40),
+        source: 'simulator',
+        fallback: true
       };
-    });
+    }
   }
 
-  // Step 3.5: Persist traffic snapshots and build map zones from recent records
-  let trafficZones = [];
+  // Generate visual map zones directly from the traffic simulator
+  let trafficZones = getTrafficZones(source.lat, source.lon, destination.lat, destination.lon);
+
+  // We can still optionally persist the snapshots asynchronously
   try {
     const primaryRoute = routesWithTraffic[0];
     const routeId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const sampledPoints = sampleRouteCoordinates(primaryRoute, 7);
 
     if (sampledPoints.length > 0) {
-      await persistTrafficSnapshots(sampledPoints, {
+      persistTrafficSnapshots(sampledPoints, {
         level: primaryRoute?.trafficLevel || toRouteTrafficLevel(trafficPrediction.level),
         score: primaryRoute?.trafficScore ?? trafficPrediction.score ?? 50,
         source: primaryRoute?.trafficSource || trafficPrediction.source || 'fallback',
         routeId,
-      });
+      }).catch(err => console.log('Background persistence silent error:', err.message));
     }
-
-    const recentTraffic = await listRecentTraffic({ limit: 120, maxAgeMinutes: 120 });
-    trafficZones = buildTrafficZones(recentTraffic, 32);
   } catch (e) {
     console.log(`   Traffic persistence skipped: ${e.message}`);
-    trafficZones = [];
   }
 
   // Step 4: Run graph algorithms on the best route for analysis/comparison
@@ -258,7 +253,22 @@ export async function optimizeRoute({
         console.log('   Switch suggestion suppressed (cooldown/duplicate)');
       } else {
         const timeSavedMinutes = Math.max(1, Math.round(timeSaved / 60));
-        const aiMessage = await generateSwitchMessage({ timeSavedMinutes });
+        const aiMessage = await generateSwitchMessage({
+          timeSavedMinutes,
+          context: {
+            source,
+            destination,
+            currentRoute,
+            alternativeRoute: betterRoute,
+            allRoutes: scoredRoutes,
+            trafficLevel: currentRoute?.trafficLevel || trafficPrediction.level?.toLowerCase?.() || 'heavy',
+            trafficScore: currentRoute?.trafficScore ?? trafficPrediction.score ?? 0,
+            timeSavedSeconds: timeSaved,
+            totalDurationSeconds: currentRoute?.adjustedDuration || currentRoute?.duration || 0,
+            totalDistanceMeters: currentRoute?.distance || 0,
+            weather,
+          },
+        });
         switchSuggestion = {
           message: aiMessage || buildSwitchMessage(timeSaved),
           timeSaved,

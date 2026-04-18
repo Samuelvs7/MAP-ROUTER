@@ -1,6 +1,6 @@
 # AI Smart Router Planner
 
-An intelligent route optimization web app that combines graph algorithms, weighted scoring, and ML-based traffic prediction.
+An intelligent route optimization web app that combines graph algorithms, weighted scoring, ML-based traffic prediction, account-based saved places, and live AI route assistance.
 
 ## What Makes It Different
 
@@ -10,6 +10,8 @@ Traditional maps focus mostly on shortest-path logic. This project combines:
 - A* (heuristic pathfinding with Haversine)
 - Weighted AI scoring across distance, time, traffic, cost, weather, and road type
 - ML traffic prediction via a Flask API (`time`, `day` -> traffic level/score)
+- JWT auth with MongoDB-backed user profiles, saved places, and route history
+- Dynamic route-aware AI responses via OpenAI or Gemini (with OpenRouter compatibility)
 
 ## Tech Stack
 
@@ -17,11 +19,12 @@ Traditional maps focus mostly on shortest-path logic. This project combines:
 |---|---|
 | Frontend | React 18, Vite, Tailwind CSS, React-Leaflet, Framer Motion |
 | Backend | Node.js, Express |
-| Database | MongoDB Atlas (optional) |
+| Database | MongoDB Atlas |
 | Routing | OpenRouteService + OSRM fallback |
 | Weather | OpenWeatherMap (optional) |
 | ML Service | Flask + model.pkl |
-| LLM Messaging | Gemini (optional fallback-safe messaging) |
+| Auth | Email validation, bcrypt password hashing, JWT, email verification |
+| LLM Messaging | OpenAI Responses API or Gemini API (OpenRouter-compatible fallback) |
 
 ## Project Structure
 
@@ -62,11 +65,24 @@ pip install -r requirements.txt
 Create `server/.env` (you can copy from `server/.env.example`):
 
 ```env
+CLIENT_URL=http://localhost:5173
+MONGO_URI=your_mongodb_uri
+JWT_SECRET=your_long_random_jwt_secret
+AI_PROVIDER=openai
+OPENAI_API_KEY=your_openai_key
+OPENAI_MODEL=gpt-5.4-mini
+# or
+GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL=gemini-2.5-flash
 ORS_API_KEY=your_openrouteservice_key
 WEATHER_API_KEY=your_openweathermap_key
-MONGO_URI=your_mongodb_uri
-GEMINI_API_KEY=your_gemini_key
 ML_PREDICT_URL=http://localhost:5001/predict
+# Optional SMTP for real verification emails
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=AI Route Planner <no-reply@example.com>
 ```
 
 ## Run the System
@@ -129,7 +145,13 @@ This checks:
 | POST | `/api/routes/multi-stop` | Multi-stop optimization |
 | GET | `/api/routes/geocode?q=` | Geocoding |
 | GET | `/api/routes/reverse-geocode?lat=&lon=` | Reverse geocoding |
+| POST | `/api/auth/register` | Create account + send verification |
+| POST | `/api/auth/login` | Login with email/password |
+| POST | `/api/auth/verify-email` | Verify account email |
+| GET | `/api/auth/me` | Current user profile |
+| PUT | `/api/auth/profile` | Update profile |
 | GET | `/api/history` | Route history |
+| GET | `/api/saved` | Saved places |
 | GET | `/api/health` | Backend health |
 
 ## API Endpoints (ML)
@@ -142,7 +164,9 @@ This checks:
 ## Notes
 
 - Traffic routing falls back safely if ML service is down.
-- Gemini is used only for user-facing switch suggestions, not route calculations.
+- Email verification uses SMTP when configured, otherwise the backend logs and returns a development preview link.
+- OpenAI Responses API usage follows the current text-generation and responses docs: https://developers.openai.com/api/docs/guides/text and https://developers.openai.com/api/reference/resources/responses/methods/create
+- Gemini text generation uses the current `models.generateContent` REST flow: https://ai.google.dev/gemini-api/docs/text-generation
 - Rotate API keys immediately if they were exposed publicly.
 
 ## License

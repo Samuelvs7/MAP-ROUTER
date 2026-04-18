@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { History, Trash2, MapPin, Clock, Zap, ArrowRight, BarChart3 } from 'lucide-react';
+import { History, Trash2, MapPin, Clock, Zap, ArrowRight, BarChart3, Navigation2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getHistory, deleteHistory, getStats } from '../services/api';
 import toast from 'react-hot-toast';
@@ -114,7 +114,7 @@ export default function HistoryPage() {
                       {item.selectedRoute && (
                         <>
                           <span>{(item.selectedRoute.distance / 1000).toFixed(1)} km</span>
-                          <span>{Math.round(item.selectedRoute.duration / 60)} min</span>
+                          <span>{Math.round((item.selectedRoute.adjustedDuration || item.selectedRoute.duration) / 60)} min</span>
                           <span>₹{item.selectedRoute.estimatedCost}</span>
                         </>
                       )}
@@ -133,6 +133,14 @@ export default function HistoryPage() {
                       <Clock className="w-3 h-3 inline mr-1" />
                       {formatDate(item.createdAt)}
                     </span>
+                    {/* Re-open in Planner via dynamic route */}
+                    <Link
+                      to={`/planner/${item._id}`}
+                      title="Re-open in Planner"
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-blue-500/10 text-surface-500 hover:text-blue-400 transition-all"
+                    >
+                      <Navigation2 className="w-4 h-4" />
+                    </Link>
                     <button
                       onClick={() => handleDelete(item._id)}
                       className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-accent-rose/10 text-surface-500 hover:text-accent-rose transition-all"
