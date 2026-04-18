@@ -121,7 +121,46 @@ export async function streamOpenRouterToStdout(prompt = 'What is the meaning of 
   return combined.trim() || null;
 }
 
+export async function testGeminiDirect() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { success: false, error: 'GEMINI_API_KEY not found in .env' };
+  }
+
+  // User suggested v1beta endpoint might be needed
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  
+  try {
+    const response = await axios.post(
+      url,
+      {
+        contents: [{ parts: [{ text: "Hello, confirm you are working." }] }]
+      },
+      { timeout: 10000 }
+    );
+
+    return {
+      success: true,
+      provider: 'google-direct',
+      data: response.data
+    };
+  } catch (err) {
+    console.error("Gemini Direct Error:", err.response?.data || err.message);
+    return {
+      success: false,
+      provider: 'google-direct',
+      error: err.response?.data?.error?.message || err.message,
+      details: err.response?.data || null
+    };
+  }
+}
+
 export async function testGeminiConnection() {
+  // Try direct first since user is having issues with the "openrouter" flow
+  const direct = await testGeminiDirect();
+  if (direct.success) return direct;
+  
+  // Fallback to existing OpenRouter logic
   const apiKey = getOpenRouterApiKey();
   if (!apiKey) {
     return {
@@ -529,6 +568,7 @@ export { DEFAULT_SWITCH_MESSAGE };
 
 export default {
   testGeminiConnection,
+  testGeminiDirect,
   generateSwitchMessage,
   generateIntelligentAnalysis,
   summarizeSearchResults,

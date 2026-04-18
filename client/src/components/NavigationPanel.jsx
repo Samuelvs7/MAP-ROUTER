@@ -83,6 +83,7 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [gpsError, setGpsError] = useState('');
+  const [navMode, setNavMode] = useState('sim'); // 'sim' or 'live'
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const [elapsedDistance, setElapsedDistance] = useState(0);
@@ -91,6 +92,7 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
   const [speedKmh, setSpeedKmh] = useState(0);
   const [eta, setEta] = useState('--:--');
   const [distanceToTurn, setDistanceToTurn] = useState(0);
+  const [simDist, setSimDist] = useState(0);
 
   const watchIdRef = useRef(null);
   const prevPointRef = useRef(null);
@@ -225,6 +227,10 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
   }, []);
 
   const startTracking = useCallback(() => {
+    if (navMode === 'sim') {
+      setIsTracking(true);
+      return;
+    }
     if (!navigator.geolocation) {
       setGpsError('GPS is not supported in this browser.');
       return;
@@ -257,7 +263,39 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
     );
 
     watchIdRef.current = id;
-  }, [updateNavigationState]);
+  }, [updateNavigationState, navMode]);
+
+  // ── Simulation Ticker ──
+  useEffect(() => {
+    if (navMode !== 'sim' || !isTracking || !polyline) return;
+
+    const interval = setInterval(() => {
+      setSimDist((prev) => {
+        const next = prev + (40 / 3.6); // 40 km/h in m/s
+        if (next >= polyline.total) {
+          clearInterval(interval);
+          return polyline.total;
+        }
+
+        // Interpolate position
+        let target = next;
+        let found = false;
+        for (const segment of polyline.segments) {
+          if (target >= segment.cumulativeStart && target <= segment.cumulativeStart + segment.length) {
+            const segmentT = segment.length > 0 ? (target - segment.cumulativeStart) / segment.length : 0;
+            const lat = segment.start.lat + (segment.end.lat - segment.start.lat) * segmentT;
+            const lon = segment.start.lon + (segment.end.lon - segment.start.lon) * segmentT;
+            updateNavigationState({ latitude: lat, longitude: lon, speed: 11.1 }); // 40kmh
+            found = true;
+            break;
+          }
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [navMode, isTracking, polyline, updateNavigationState]);
 
   useEffect(() => {
     startTracking();
@@ -307,8 +345,19 @@ export default function NavigationPanel({ route, onPositionUpdate, onClose }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <Navigation style={{ width: 18, height: 18 }} />
-            <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              Live GPS Navigation
+            <div style={{ fontSize: 13, display: 'flex', borderRadius: 6, background: 'rgba(0,0,0,0.2)', padding: 2 }}>
+              <button 
+                onClick={() => { stopTracking(); setNavMode('sim'); setSimDist(0); }}
+                style={{ 
+                  padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                  background: navMode === 'sim' ? '#fff' : 'transparent', color: navMode === 'sim' ? '#111' : '#fff'
+                }}>Simulate</button>
+              <button 
+                onClick={() => { stopTracking(); setNavMode('live'); }}
+                style={{ 
+                  padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                  background: navMode === 'live' ? '#fff' : 'transparent', color: navMode === 'live' ? '#111' : '#fff'
+                }}>Live GPS</button>
             </div>
           </div>
           <button

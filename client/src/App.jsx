@@ -8,6 +8,14 @@ import PlannerPage from './pages/PlannerPage';
 import HistoryPage from './pages/HistoryPage';
 import AISuggestionsPage from './pages/AISuggestionsPage';
 import SavedPlacesPage from './pages/SavedPlacesPage';
+import LoginPage from './pages/LoginPage';
+import { Navigate } from 'react-router-dom';
+
+const ProtectedRoute = ({ children }) => {
+  const token = localStorage.getItem('map_router_token');
+  if (!token) return <Navigate to="/login" replace />;
+  return children;
+};
 
 function App() {
   return (
@@ -35,35 +43,47 @@ function App() {
             }
           />
           <Route
+            path="/login"
+            element={<LoginPage />}
+          />
+          <Route
             path="/planner"
             element={
-              <AppLayout>
-                <PlannerPage />
-              </AppLayout>
+              <ProtectedRoute>
+                <AppLayout>
+                  <PlannerPage />
+                </AppLayout>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/history"
             element={
-              <AppLayout>
-                <HistoryPage />
-              </AppLayout>
+              <ProtectedRoute>
+                <AppLayout>
+                  <HistoryPage />
+                </AppLayout>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/saved"
             element={
-              <AppLayout>
-                <SavedPlacesPage />
-              </AppLayout>
+              <ProtectedRoute>
+                <AppLayout>
+                  <SavedPlacesPage />
+                </AppLayout>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/ai-suggestions"
             element={
-              <AppLayout>
-                <AISuggestionsPage />
-              </AppLayout>
+              <ProtectedRoute>
+                <AppLayout>
+                  <AISuggestionsPage />
+                </AppLayout>
+              </ProtectedRoute>
             }
           />
         </Routes>

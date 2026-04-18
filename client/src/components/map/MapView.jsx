@@ -14,6 +14,8 @@ import {
   NavigationFooter,
   SpeedPanel,
 } from './NavigationOverlays';
+import toast from 'react-hot-toast';
+import { addSavedPlace } from '../../services/api';
 
 /* ══════════════════════════════════════════════
    TILE STYLES (MapLibre GL vector / raster)
@@ -316,7 +318,7 @@ function RightControlStack({
 /* ══════════════════════════════════════════════
    CONTEXT MENU
    ══════════════════════════════════════════════ */
-function ContextMenu({ position, coords, address, loading, onDirectionsFrom, onDirectionsTo, onAddStop, onClose }) {
+function ContextMenu({ position, coords, address, loading, onDirectionsFrom, onDirectionsTo, onAddStop, onSavePlace, onClose }) {
   useEffect(() => {
     const h = () => onClose();
     const timer = setTimeout(() => document.addEventListener('click', h, { once: true }), 50);
@@ -364,6 +366,7 @@ function ContextMenu({ position, coords, address, loading, onDirectionsFrom, onD
       {item(<><span style={{ fontSize: 12, fontWeight: 700, color: '#ea4335' }}>TO</span>&nbsp;Directions to here</>, '234,67,53', onDirectionsTo)}
       {item(<><span style={{ fontSize: 12, fontWeight: 700, color: '#fbbc04' }}>STOP</span>&nbsp;Add as stop</>, '251,188,4', onAddStop)}
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+      {item(<><span style={{ fontSize: 12, fontWeight: 700, color: '#6366f1' }}>SAVE</span>&nbsp;Save to Favorites</>, '99,102,241', onSavePlace)}
       {item(
         <><span style={{ fontSize: 12, fontWeight: 700 }}>COPY</span>&nbsp;Copy coordinates</>,
         '255,255,255',
@@ -376,7 +379,7 @@ function ContextMenu({ position, coords, address, loading, onDirectionsFrom, onD
 /* ══════════════════════════════════════════════
    DROPPED PIN TOOLTIP
    ══════════════════════════════════════════════ */
-function DroppedPinTooltip({ lat, lon, x, y, onFrom, onTo, onStop, onClose }) {
+function DroppedPinTooltip({ lat, lon, x, y, onFrom, onTo, onStop, onSave, onClose }) {
   const [addr, setAddr] = useState('');
   useEffect(() => {
     (async () => {
@@ -395,7 +398,7 @@ function DroppedPinTooltip({ lat, lon, x, y, onFrom, onTo, onStop, onClose }) {
       style={{
         padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
         fontSize: 11, fontWeight: 600, fontFamily: 'inherit', flex: 1,
-        background: bg, color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: bg, color: color, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
       {label}
     </button>
@@ -413,11 +416,20 @@ function DroppedPinTooltip({ lat, lon, x, y, onFrom, onTo, onStop, onClose }) {
         {addr || 'Loading...'}
       </div>
       <div style={{ fontSize: 10, color: '#5c6078', marginBottom: 8 }}>{lat.toFixed(5)}, {lon.toFixed(5)}</div>
-      <div style={{ display: 'flex', gap: 4 }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
         {btn('From', 'rgba(52,168,83,0.2)', '#34a853', onFrom)}
         {btn('To', 'rgba(234,67,53,0.2)', '#ea4335', onTo)}
         {btn('Stop', 'rgba(251,188,4,0.2)', '#fbbc04', onStop)}
       </div>
+      <button onClick={() => { onSave(); onClose(); }}
+        style={{
+          width: '100%', padding: '8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+          fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+          background: 'rgba(99,102,241,0.2)', color: '#6366f1',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
+        }}>
+        ★ Save to Favorites
+      </button>
       <button onClick={onClose}
         style={{ position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', color: '#5c6078', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>
         ×
@@ -501,6 +513,10 @@ export default function MapView({
         data: { type: 'FeatureCollection', features: [] },
       });
       map.addSource('turn-highlight', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addSource('traffic-zones', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
@@ -601,6 +617,22 @@ export default function MapView({
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       });
 
+      // ── Traffic Zones ──
+      map.addLayer({
+        id: 'traffic-zones-fill',
+        type: 'circle',
+        source: 'traffic-zones',
+        paint: {
+          'circle-radius': ['get', 'radiusMeters'],
+          'circle-radius-transition': { duration: 0 },
+          'circle-color': ['get', 'color'],
+          'circle-opacity': ['get', 'opacity'],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': ['get', 'color'],
+          'circle-stroke-opacity': 0.4,
+        },
+      });
+
       // ── Click handler ──
       map.on('click', (e) => {
         setShowLayerPanel(false);
@@ -680,6 +712,24 @@ export default function MapView({
       addLayerIfMissing({ id: 'completed-path-layer', type: 'line', source: 'completed-path', paint: { 'line-color': '#7BAAF7', 'line-width': 8, 'line-opacity': 0.3 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
       addLayerIfMissing({ id: 'turn-highlight-glow', type: 'line', source: 'turn-highlight', paint: { 'line-color': '#ffffff', 'line-width': 14, 'line-opacity': 0.3, 'line-blur': 3 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
       addLayerIfMissing({ id: 'turn-highlight-core', type: 'line', source: 'turn-highlight', paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.9 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      
+      addIfMissing('traffic-zones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      addLayerIfMissing({
+        id: 'traffic-zones-fill',
+        type: 'circle',
+        source: 'traffic-zones',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['exponential', 2], ['zoom'],
+            0, 0,
+            20, ['*', ['get', 'radiusMeters'], 1] // This is complex in MapLibre for meters, usually use meter-to-pixel ratio
+          ],
+          'circle-color': ['get', 'color'],
+          'circle-opacity': ['get', 'opacity'],
+          'circle-stroke-width': 1,
+          'circle-stroke-color': ['get', 'color'],
+        }
+      });
     });
   }, [mapLayer]);
 
@@ -749,6 +799,22 @@ export default function MapView({
     });
 
     map.getSource('routes').setData({ type: 'FeatureCollection', features });
+
+    // Update traffic zones
+    if (map.getSource('traffic-zones')) {
+      const zoneFeatures = trafficEnabled ? (state.trafficZones || []).map(z => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [z.lon, z.lat] },
+        properties: {
+          ...z,
+          radiusMeters: z.radiusKm * 1000,
+          // Hack for MapLibre circle radius in meters:
+          // circle-radius = radius_in_meters / (meters_per_pixel_at_latitude)
+          // Simplified: radius_in_pixels = radius_in_meters / (78271.484 * cos(lat) / 2^zoom)
+        }
+      })) : [];
+      map.getSource('traffic-zones').setData({ type: 'FeatureCollection', features: zoneFeatures });
+    }
 
     // ── Completed path ──
     const selRoute = state.routes.find(r => r.index === state.selectedRouteIndex);
@@ -1025,6 +1091,17 @@ export default function MapView({
     setDroppedPin(null);
   }, [contextMenu, reverseGeocode, onMapAddStop]);
 
+  const handleSavePlace = useCallback(async (lat, lon, addr) => {
+    try {
+      const address = addr || (await reverseGeocode(lat, lon)).name;
+      const name = address.split(',')[0] || 'Saved Place';
+      await addSavedPlace({ name, lat, lon, lng: lon, address });
+      toast.success(`Saved: ${name}`);
+    } catch {
+      toast.error('Failed to save place');
+    }
+  }, [reverseGeocode]);
+
   /* ══════════════════════════════════════════════
      DROPPED PIN ACTIONS
      ══════════════════════════════════════════════ */
@@ -1095,6 +1172,7 @@ export default function MapView({
           onDirectionsFrom={handleDirectionsFrom}
           onDirectionsTo={handleDirectionsTo}
           onAddStop={handleAddStop}
+          onSavePlace={() => handleSavePlace(contextMenu.lat, contextMenu.lng, contextMenu.address)}
           onClose={() => setContextMenu(null)}
         />
       )}
@@ -1109,6 +1187,7 @@ export default function MapView({
           onFrom={handlePinFrom}
           onTo={handlePinTo}
           onStop={handlePinStop}
+          onSave={() => handleSavePlace(droppedPin.lat, droppedPin.lon, '')}
           onClose={() => setDroppedPin(null)}
         />
       )}

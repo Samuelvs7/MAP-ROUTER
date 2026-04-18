@@ -342,9 +342,14 @@ export default function HomePage() {
 
       <motion.main className="route-main" style={{ y: contentY }}>
         <header className="top-bar">
-          <button type="button" className="open-planner-btn" onClick={() => navigate('/planner')}>
-            Get Started
-          </button>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button type="button" className="open-planner-btn" onClick={() => navigate('/planner')}>
+              Get Started
+            </button>
+            <button type="button" className="login-btn" onClick={() => navigate('/login')}>
+              Login
+            </button>
+          </div>
           <div className="brand-pill">
             <Sparkles size={14} />
             AI Smart Route Planner

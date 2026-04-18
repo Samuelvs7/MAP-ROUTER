@@ -10,14 +10,33 @@ router.post('/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, error: 'Name, email, and password are required' });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
     }
+
+    const normalizedEmail = email.toLowerCase();
+
+    // Default User Bypass for Samuel
+    if (normalizedEmail === 'samuelvelicharla@gmail.com' && password === 'Samuel@2006') {
+      const token = jwt.sign(
+        { id: '67b3f0000000000000000000', name: name || 'Samuel', email: normalizedEmail },
+        process.env.JWT_SECRET || 'mapRouterAI2026SecretKey',
+        { expiresIn: '7d' }
+      );
+
+      return res.status(201).json({
+        success: true,
+        token,
+        user: { id: '67b3f0000000000000000000', name: name || 'Samuel', email: normalizedEmail },
+      });
+    }
+
+    if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     }
 
-    const existing = await User.findOne({ email: email.toLowerCase() });
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
       return res.status(400).json({ success: false, error: 'Email already registered' });
     }
@@ -50,7 +69,30 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Email and password are required' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.toLowerCase();
+
+    // Default Login Bypass for Samuel
+    if (normalizedEmail === 'samuelvelicharla@gmail.com' && password === 'Samuel@2006') {
+      const defaultUser = {
+        _id: '67b3f0000000000000000000', // Mock MongoDB ID
+        name: 'Samuel',
+        email: 'samuelvelicharla@gmail.com'
+      };
+      
+      const token = jwt.sign(
+        { id: defaultUser._id, name: defaultUser.name, email: defaultUser.email },
+        process.env.JWT_SECRET || 'mapRouterAI2026SecretKey',
+        { expiresIn: '7d' }
+      );
+
+      return res.json({
+        success: true,
+        token,
+        user: { id: defaultUser._id, name: defaultUser.name, email: defaultUser.email },
+      });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(400).json({ success: false, error: 'Invalid email or password' });
     }

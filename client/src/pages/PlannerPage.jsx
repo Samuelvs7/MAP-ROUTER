@@ -401,107 +401,107 @@ export default function PlannerPage() {
             </div>
           </div>        ) : (
           <>
-            {/* Search Section */}
-            <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
-                {/* Locations column */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <LocationInput placeholder="Start location..." value={state.source}
-                    onChange={(v) => dispatch({ type: 'SET_SOURCE', payload: v })}
-                    onClear={() => dispatch({ type: 'SET_SOURCE', payload: null })}
-                    color="#34a853" onLocateMe={handleLocateMe} />
+            {/* Search Section — Hidden if AI Assistant is full-screen toggle */}
+            {tab !== 'assistant' && (
+              <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
+                  {/* Locations column */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <LocationInput placeholder="Start location..." value={state.source}
+                      onChange={(v) => dispatch({ type: 'SET_SOURCE', payload: v })}
+                      onClear={() => dispatch({ type: 'SET_SOURCE', payload: null })}
+                      color="#34a853" onLocateMe={handleLocateMe} />
 
-                  {stops.map((stop, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      <div style={{ flex: 1 }}>
-                        <LocationInput placeholder={`Stop ${i + 1}...`} value={stop.lat ? stop : null} color="#fbbc04"
-                          onChange={(v) => { const ns = [...stops]; ns[i] = v || { name: '', lat: null, lon: null }; setStops(ns); }}
-                          onClear={() => setStops(stops.filter((_, j) => j !== i))} />
+                    {stops.map((stop, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <div style={{ flex: 1 }}>
+                          <LocationInput placeholder={`Stop ${i + 1}...`} value={stop.lat ? stop : null} color="#fbbc04"
+                            onChange={(v) => { const ns = [...stops]; ns[i] = v || { name: '', lat: null, lon: null }; setStops(ns); }}
+                            onClear={() => setStops(stops.filter((_, j) => j !== i))} />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
 
-                  <LocationInput placeholder="Destination..." value={state.destination}
-                    onChange={(v) => dispatch({ type: 'SET_DESTINATION', payload: v })}
-                    onClear={() => dispatch({ type: 'SET_DESTINATION', payload: null })}
-                    color="#ea4335" />
+                    <LocationInput placeholder="Destination..." value={state.destination}
+                      onChange={(v) => dispatch({ type: 'SET_DESTINATION', payload: v })}
+                      onClear={() => dispatch({ type: 'SET_DESTINATION', payload: null })}
+                      color="#ea4335" />
+                  </div>
+
+                  {/* Swap button */}
+                  {(state.source || state.destination) && (
+                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
+                      <button onClick={handleSwapLocations} title="Swap locations"
+                        style={{
+                          width: 32, height: 32, borderRadius: '50%', border: '1px solid var(--border)',
+                          background: 'var(--panel-alt)', color: 'var(--text-muted)', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'all 0.2s', fontSize: 14,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
+                        ⇅
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {/* Swap button */}
-                {(state.source || state.destination) && (
-                  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
-                    <button onClick={handleSwapLocations} title="Swap locations"
-                      style={{
-                        width: 32, height: 32, borderRadius: '50%', border: '1px solid var(--border)',
-                        background: 'var(--panel-alt)', color: 'var(--text-muted)', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.2s', fontSize: 14,
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
-                      ⇅
-                    </button>
+                <button onClick={() => { if (stops.length < 8) setStops([...stops, { name: '', lat: null, lon: null }]); }}
+                  style={{ width: '100%', padding: '8px', marginTop: 8, background: 'none', border: '1px dashed var(--border)',
+                    borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', gap: 4, transition: 'all 0.2s', fontFamily: 'inherit' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
+                  <Plus style={{ width: 14, height: 14 }} /> Add stop
+                </button>
+
+                {/* Route Preference Pills */}
+                {!isMultiStop && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                    {[
+                      { v: 'fastest', l: '⚡ Fastest' }, { v: 'shortest', l: '📏 Shortest' },
+                      { v: 'avoid_tolls', l: '🚫 No Tolls' }, { v: 'avoid_highways', l: '🛣️ No Highways' },
+                    ].map(p => (
+                      <button key={p.v} onClick={() => dispatch({ type: 'SET_PREFERENCE', payload: p.v })}
+                        style={{ flex: 1, padding: '6px 4px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none',
+                          cursor: 'pointer', transition: 'all 0.2s', fontFamily: 'inherit',
+                          background: state.preference === p.v ? 'var(--blue-dim)' : 'var(--panel-alt)',
+                          color: state.preference === p.v ? 'var(--blue)' : 'var(--text-muted)' }}>
+                        {p.l}
+                      </button>
+                    ))}
                   </div>
                 )}
-              </div>
 
-              <button onClick={() => { if (stops.length < 8) setStops([...stops, { name: '', lat: null, lon: null }]); }}
-                style={{ width: '100%', padding: '8px', marginTop: 8, background: 'none', border: '1px dashed var(--border)',
-                  borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', display: 'flex',
-                  alignItems: 'center', justifyContent: 'center', gap: 4, transition: 'all 0.2s', fontFamily: 'inherit' }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
-                <Plus style={{ width: 14, height: 14 }} /> Add stop
-              </button>
-
-              {/* Route Preference Pills */}
-              {!isMultiStop && (
-                <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                  {[
-                    { v: 'fastest', l: '⚡ Fastest' }, { v: 'shortest', l: '📏 Shortest' },
-                    { v: 'avoid_tolls', l: '🚫 No Tolls' }, { v: 'avoid_highways', l: '🛣️ No Highways' },
-                  ].map(p => (
-                    <button key={p.v} onClick={() => dispatch({ type: 'SET_PREFERENCE', payload: p.v })}
-                      style={{ flex: 1, padding: '6px 4px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none',
-                        cursor: 'pointer', transition: 'all 0.2s', fontFamily: 'inherit',
-                        background: state.preference === p.v ? 'var(--blue-dim)' : 'var(--panel-alt)',
-                        color: state.preference === p.v ? 'var(--blue)' : 'var(--text-muted)' }}>
-                      {p.l}
+                {/* Action Buttons */}
+                <div style={{ marginTop: 10, display: 'flex', gap: 6 }}>
+                  {isMultiStop ? (
+                    <button className="btn-green" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={handleMultiOptimize} disabled={multiLoading || !state.source || !state.destination}>
+                      {multiLoading ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Optimizing...</>
+                       : <><RouteIcon style={{ width: 14, height: 14 }} /> Optimize {stops.filter(s=>s.lat).length + 2}-Stop Route</>}
                     </button>
-                  ))}
+                  ) : (
+                    <button className="btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={handleFindRoute} disabled={state.loading || !state.source || !state.destination}>
+                      {state.loading ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Finding routes...</>
+                       : <><Navigation style={{ width: 14, height: 14 }} /> Find Route</>}
+                    </button>
+                  )}
+                  {state.routes.length > 0 && (
+                    <button onClick={startNavigation} title="Start Navigation"
+                      style={{ padding: '10px 14px', borderRadius: 8, border: 'none', background: '#34a853',
+                        color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600 }}>
+                      <Play style={{ width: 14, height: 14 }} /> Navigate
+                    </button>
+                  )}
                 </div>
-              )}
 
-              {/* Action Buttons */}
-              <div style={{ marginTop: 10, display: 'flex', gap: 6 }}>
-                {isMultiStop ? (
-                  <button className="btn-green" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                    onClick={handleMultiOptimize} disabled={multiLoading || !state.source || !state.destination}>
-                    {multiLoading ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Optimizing...</>
-                     : <><RouteIcon style={{ width: 14, height: 14 }} /> Optimize {stops.filter(s=>s.lat).length + 2}-Stop Route</>}
-                  </button>
-                ) : (
-                  <button className="btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                    onClick={handleFindRoute} disabled={state.loading || !state.source || !state.destination}>
-                    {state.loading ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Finding routes...</>
-                     : <><Navigation style={{ width: 14, height: 14 }} /> Find Route</>}
-                  </button>
-                )}
-                {/* Navigate button */}
-                {state.routes.length > 0 && (
-                  <button onClick={startNavigation} title="Start Navigation"
-                    style={{ padding: '10px 14px', borderRadius: 8, border: 'none', background: '#34a853',
-                      color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600 }}>
-                    <Play style={{ width: 14, height: 14 }} /> Navigate
-                  </button>
-                )}
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center', opacity: 0.7 }}>
+                  💡 Right-click on map to set points · Drag pins to move
+                </div>
               </div>
-
-              {/* Hint */}
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center', opacity: 0.7 }}>
-                💡 Right-click on map to set points · Drag pins to move
-              </div>
-            </div>
+            )}
 
             {/* Results Tabs — Always visible for AI Assistant */}
             {true && (
