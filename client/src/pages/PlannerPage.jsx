@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { startTransition, useState, useCallback, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Search, MapPin, Plus, X, Loader2, Navigation, ChevronRight, Clock, Route as RouteIcon, ArrowRight, CornerDownRight, CornerUpRight, TrendingUp, RotateCcw, Play, Crosshair, Grip } from 'lucide-react';
@@ -9,6 +9,7 @@ import MapView from '../components/map/MapView';
 import NavigationPanel from '../components/NavigationPanel';
 import AIAssistantPanel from '../components/AIAssistantPanel';
 import useNavigationAI from '../hooks/useNavigationAI';
+import { useAIChat } from '../context/AIChatContext';
 
 /* ══════════════════════════════════════════════
    Location Input Component
@@ -154,6 +155,10 @@ function AIAssistantPanelWrapper({
       images={ai.images}
       isThinking={ai.isThinking}
       pendingSuggestion={ai.pendingSuggestion}
+      imagesLoading={ai.imagesLoading}
+      imageError={ai.imageError}
+      historyLoading={ai.historyLoading}
+      historyError={ai.historyError}
       onSendMessage={ai.sendMessage}
       onAcceptSwitch={handleAccept}
       onDismissSwitch={handleDismiss}
@@ -172,6 +177,7 @@ function AIAssistantPanelWrapper({
    ══════════════════════════════════════════════ */
 export default function PlannerPage() {
   const { state, dispatch } = useRoute();
+  const { images: routeImages, imagesLoading: routeImagesLoading, imageError: routeImageError } = useAIChat();
   const { routeId } = useParams(); // Dynamic routing: /planner/:routeId
   const [stops, setStops] = useState([]);
   const [multiResult, setMultiResult] = useState(null);
@@ -185,7 +191,6 @@ export default function PlannerPage() {
   const [userLocation, setUserLocation] = useState(null);
   // Panel collapsed on mobile
   const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   // Auto-recalculate flag
   const autoRecalcRef = useRef(false);
   // Dynamic refresh
@@ -196,7 +201,6 @@ export default function PlannerPage() {
   const isMultiStop = stops.length > 0;
   const selectedRoute = state.routes.find((route) => route.index === state.selectedRouteIndex) || null;
   const activeRoute = directionsRoute || selectedRoute || state.routes[0] || null;
-  const showAssistantColumn = !navigating && assistantOpen;
 
   // ── Dynamic Route Loading: restore route from history via URL param ──
   useEffect(() => {
@@ -240,8 +244,20 @@ export default function PlannerPage() {
             preference: state.preference,
             currentRouteIndex: state.selectedRouteIndex,
           });
-          dispatch({ type: 'SET_RESULTS', payload: res.data });
-          setDirectionsRoute(res.data.routes[0]);
+          const routes = Array.isArray(res.data?.routes) ? res.data.routes : [];
+          const selectedRouteIndex = routes.some((route) => route.index === state.selectedRouteIndex)
+            ? state.selectedRouteIndex
+            : res.data?.bestRouteIndex ?? routes[0]?.index ?? null;
+          dispatch({
+            type: 'SET_RESULTS',
+            payload: {
+              ...res.data,
+              selectedRouteIndex,
+            },
+          });
+          const refreshedRoute = routes.find((route) => route.index === selectedRouteIndex) || routes[0] || null;
+          setDirectionsRoute(refreshedRoute);
+          setLatestSwitchSuggestion(res.data?.switchSuggestion || null);
           toast.success('🔄 Route refreshed (traffic updated)', { duration: 2000 });
         } catch {}
       }, 20000);
@@ -249,9 +265,57 @@ export default function PlannerPage() {
     } else {
       if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
     }
-  }, [autoRefresh, state.source, state.destination, state.preference, state.routes.length, isMultiStop, dispatch]);
+  }, [autoRefresh, state.source, state.destination, state.preference, state.routes.length, state.selectedRouteIndex, isMultiStop, dispatch]);
   const fmtDist = (m) => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
   const fmtTime = (s) => { const h = Math.floor(s / 3600); const m = Math.round((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m} min`; };
+  const preferenceLabels = {
+    fastest: 'Fastest',
+    shortest: 'Shortest',
+    avoid_tolls: 'No Tolls',
+    avoid_highways: 'No Highways',
+  };
+
+  const applyRouteResponse = useCallback((data, { selectBest = false } = {}) => {
+    const routes = Array.isArray(data?.routes) ? data.routes : [];
+    const nextSelectedIndex = selectBest
+      ? data?.bestRouteIndex ?? routes[0]?.index ?? null
+      : routes.some((route) => route.index === state.selectedRouteIndex)
+        ? state.selectedRouteIndex
+        : data?.bestRouteIndex ?? routes[0]?.index ?? null;
+
+    dispatch({
+      type: 'SET_RESULTS',
+      payload: {
+        ...data,
+        selectedRouteIndex: nextSelectedIndex,
+      },
+    });
+
+    const nextRoute = routes.find((route) => route.index === nextSelectedIndex) || routes[0] || null;
+    setDirectionsRoute(nextRoute);
+    setLatestSwitchSuggestion(data?.switchSuggestion || null);
+    return nextRoute;
+  }, [dispatch, state.selectedRouteIndex]);
+
+  const persistRouteHistory = useCallback(async (data, preference, selectedRoute) => {
+    if (!state.source || !state.destination || !selectedRoute) {
+      return;
+    }
+
+    try {
+      await saveHistory({
+        source: state.source,
+        destination: state.destination,
+        preference,
+        selectedRoute,
+        alternativeRoutes: Array.isArray(data?.routes) ? data.routes.slice(1, 3) : [],
+        weatherCondition: data?.weather?.condition || '',
+        aiExplanation: data?.explanation?.summary || '',
+      });
+    } catch {
+      // History sync should not block the planner.
+    }
+  }, [state.source, state.destination]);
 
   const handlePositionUpdate = useCallback((pos) => { setNavPosition(pos); }, []);
 
@@ -285,30 +349,62 @@ export default function PlannerPage() {
         source: state.source,
         destination: state.destination,
         preference: state.preference,
-        currentRouteIndex: state.selectedRouteIndex,
+        currentRouteIndex: null,
       });
-      dispatch({ type: 'SET_RESULTS', payload: res.data });
-      setDirectionsRoute(res.data.routes[0]);
+      const selectedRoute = applyRouteResponse(res.data, { selectBest: true });
       setTab('routes');
       setNavigating(false);
       setNavPosition(null);
       toast.success(`${res.data.routes.length} route${res.data.routes.length > 1 ? 's' : ''} found`);
-      try {
-        await saveHistory({
-          source: state.source,
-          destination: state.destination,
-          preference: state.preference,
-          selectedRoute: res.data.routes[0],
-          alternativeRoutes: res.data.routes.slice(1, 3),
-          weatherCondition: res.data.weather?.condition || '',
-          aiExplanation: res.data.explanation?.summary || '',
-        });
-      } catch {}
+      await persistRouteHistory(res.data, state.preference, selectedRoute);
     } catch (err) {
       dispatch({ type: 'SET_ERROR', payload: err.response?.data?.error || err.message });
       toast.error(err.response?.data?.error || 'Failed to find routes');
     }
-  }, [state.source, state.destination, state.preference, dispatch]);
+  }, [state.source, state.destination, state.preference, dispatch, applyRouteResponse, persistRouteHistory]);
+
+  const handlePreferenceChange = useCallback(async (nextPreference) => {
+    if (state.preference === nextPreference) {
+      return;
+    }
+
+    startTransition(() => {
+      dispatch({ type: 'SET_PREFERENCE', payload: nextPreference });
+    });
+
+    if (!state.source || !state.destination || isMultiStop) {
+      return;
+    }
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+
+    try {
+      const res = await optimizeRoute({
+        source: state.source,
+        destination: state.destination,
+        preference: nextPreference,
+        currentRouteIndex: null,
+      });
+      const selectedRoute = applyRouteResponse(res.data, { selectBest: true });
+      setTab('routes');
+      setNavigating(false);
+      setNavPosition(null);
+      toast.success(`Updated routes for ${preferenceLabels[nextPreference] || nextPreference}`);
+      await persistRouteHistory(res.data, nextPreference, selectedRoute);
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', payload: err.response?.data?.error || err.message });
+      toast.error(err.response?.data?.error || 'Failed to update route preference');
+    }
+  }, [
+    state.preference,
+    state.source,
+    state.destination,
+    isMultiStop,
+    dispatch,
+    applyRouteResponse,
+    preferenceLabels,
+    persistRouteHistory,
+  ]);
 
   // ── Optimize Multi-Stop ──
   const handleMultiOptimize = useCallback(async () => {
@@ -434,7 +530,7 @@ export default function PlannerPage() {
   }, []);
 
   return (
-    <div className="planner-layout" style={{ height: 'calc(100vh - 48px)', display: 'flex', overflow: 'hidden' }}>
+    <div className="planner-layout" style={{ height: 'calc(100vh - 48px)', display: 'flex', minHeight: 0 }}>
       {/* ══════════════════════════════════════════════
           LEFT PANEL
          ══════════════════════════════════════════════ */}
@@ -467,7 +563,7 @@ export default function PlannerPage() {
           />
         ) : (
           <>
-            {/* Search Section — Hidden if AI Assistant is full-screen toggle */}
+            {/* Search Section */}
             <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
                   {/* Locations column */}
@@ -527,12 +623,13 @@ export default function PlannerPage() {
                       { v: 'fastest', l: '⚡ Fastest' }, { v: 'shortest', l: '📏 Shortest' },
                       { v: 'avoid_tolls', l: '🚫 No Tolls' }, { v: 'avoid_highways', l: '🛣️ No Highways' },
                     ].map(p => (
-                      <button key={p.v} onClick={() => dispatch({ type: 'SET_PREFERENCE', payload: p.v })}
+                      <button key={p.v} onClick={() => handlePreferenceChange(p.v)} disabled={state.loading}
                         style={{ flex: 1, padding: '6px 4px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none',
-                          cursor: 'pointer', transition: 'all 0.2s', fontFamily: 'inherit',
+                          cursor: state.loading ? 'default' : 'pointer', transition: 'all 0.2s', fontFamily: 'inherit',
+                          opacity: state.loading && state.preference !== p.v ? 0.6 : 1,
                           background: state.preference === p.v ? 'var(--blue-dim)' : 'var(--panel-alt)',
                           color: state.preference === p.v ? 'var(--blue)' : 'var(--text-muted)' }}>
-                        {p.l}
+                        {state.loading && state.preference === p.v ? 'Updating...' : p.l}
                       </button>
                     ))}
                   </div>
@@ -567,7 +664,7 @@ export default function PlannerPage() {
                 </div>
               </div>
 
-            {/* Results Tabs — Always visible for AI Assistant */}
+            {/* Results Tabs */}
             {true && (
               <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
                 {[
@@ -582,17 +679,26 @@ export default function PlannerPage() {
                     {t.label}
                   </button>
                 ))}
-                <button type="button" onClick={() => setAssistantOpen((open) => !open)}
-                  style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 500, border: 'none', background: 'none',
-                    cursor: 'pointer', borderBottom: assistantOpen ? '2px solid var(--blue)' : '2px solid transparent',
-                    color: assistantOpen ? 'var(--blue)' : 'var(--text-muted)', transition: 'all 0.2s', fontFamily: 'inherit' }}>
-                  AI Assistant
-                </button>
               </div>
             )}
 
             {/* Tab Content */}
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12 }}>
+              {state.error && (
+                <div style={{
+                  marginBottom: 10,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: '1px solid rgba(239,68,68,0.28)',
+                  background: 'rgba(239,68,68,0.08)',
+                  color: '#fca5a5',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                }}>
+                  {state.error}
+                </div>
+              )}
+
               {/* Routes Tab */}
               {tab === 'routes' && state.routes.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -646,6 +752,43 @@ export default function PlannerPage() {
                     <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)', marginTop: 4 }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>AI Analysis</div>
                       <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>{state.explanation.summary}</p>
+                    </div>
+                  )}
+
+                  {(routeImagesLoading || routeImages.length > 0 || routeImageError) && (
+                    <div style={{ padding: 10, borderRadius: 8, background: 'var(--panel-alt)', border: '1px solid var(--border)', marginTop: 4 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                        Street-Level Images
+                      </div>
+
+                      {routeImagesLoading && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading nearby route imagery...</div>
+                      )}
+
+                      {!routeImagesLoading && routeImages.length > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          {routeImages.slice(0, 4).map((image) => (
+                            <a key={image.id || image.url} href={image.url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+                              <img
+                                src={image.url}
+                                alt="Route street view"
+                                loading="lazy"
+                                style={{
+                                  width: '100%',
+                                  height: 92,
+                                  objectFit: 'cover',
+                                  borderRadius: 10,
+                                  border: '1px solid rgba(148,163,184,0.16)',
+                                }}
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+
+                      {!routeImagesLoading && routeImages.length === 0 && routeImageError && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{routeImageError}</div>
+                      )}
                     </div>
                   )}
 
@@ -831,15 +974,8 @@ export default function PlannerPage() {
         />
       </div>
 
-      {showAssistantColumn && (
+      {!navigating && (
         <aside className="planner-assistant-column">
-          <button
-            type="button"
-            className="planner-assistant-column__close"
-            onClick={() => setAssistantOpen(false)}
-          >
-            Close
-          </button>
           <div className="planner-assistant-column__content">
             <AIAssistantPanelWrapper
               source={state.source}

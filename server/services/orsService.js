@@ -134,11 +134,7 @@ async function getRoutesORS(sourceLat, sourceLon, destLat, destLon, preference =
   }
 
   // Choose optimization metric
-  if (preference === 'shortest') {
-    body.preference = 'shortest';
-  } else {
-    body.preference = 'recommended'; // fastest with smart routing
-  }
+  body.preference = preference === 'shortest' ? 'shortest' : 'fastest';
 
   const response = await axios.post(`${ORS_BASE}/directions/driving-car/json`, body, {
     headers: {

@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { RouteProvider } from './context/RouteContext';
+import { AIChatProvider } from './context/AIChatContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import HomeLayout from './components/layout/HomeLayout';
 import AppLayout from './components/layout/AppLayout';
@@ -55,35 +56,37 @@ function App() {
   return (
     <AuthProvider>
       <RouteProvider>
-        <Router>
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              style: {
-                background: 'rgba(15, 23, 42, 0.95)',
-                color: '#e2e8f0',
-                border: '1px solid rgba(99, 102, 241, 0.2)',
-                borderRadius: '12px',
-                backdropFilter: 'blur(8px)',
-              },
-            }}
-          />
-          <Routes>
-            <Route path="/" element={<HomeLayout><HomePage /></HomeLayout>} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-            <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <AIChatProvider>
+          <Router>
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                style: {
+                  background: 'rgba(15, 23, 42, 0.95)',
+                  color: '#e2e8f0',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  borderRadius: '12px',
+                  backdropFilter: 'blur(8px)',
+                },
+              }}
+            />
+            <Routes>
+              <Route path="/" element={<HomeLayout><HomePage /></HomeLayout>} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignupPage />} />
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
 
-            <Route path="/planner" element={<ProtectedRoute><AppLayout><PlannerPage /></AppLayout></ProtectedRoute>} />
-            <Route path="/planner/:routeId" element={<ProtectedRoute><AppLayout><PlannerPage /></AppLayout></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><AppLayout><HistoryPage /></AppLayout></ProtectedRoute>} />
-            <Route path="/saved" element={<ProtectedRoute><AppLayout><SavedPlacesPage /></AppLayout></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
-            <Route path="/ai-suggestions" element={<ProtectedRoute><AppLayout><AISuggestionsPage /></AppLayout></ProtectedRoute>} />
+              <Route path="/planner" element={<ProtectedRoute><AppLayout><PlannerPage /></AppLayout></ProtectedRoute>} />
+              <Route path="/planner/:routeId" element={<ProtectedRoute><AppLayout><PlannerPage /></AppLayout></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><AppLayout><HistoryPage /></AppLayout></ProtectedRoute>} />
+              <Route path="/saved" element={<ProtectedRoute><AppLayout><SavedPlacesPage /></AppLayout></ProtectedRoute>} />
+              <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
+              <Route path="/ai-suggestions" element={<ProtectedRoute><AppLayout><AISuggestionsPage /></AppLayout></ProtectedRoute>} />
 
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Router>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Router>
+        </AIChatProvider>
       </RouteProvider>
     </AuthProvider>
   );

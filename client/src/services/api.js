@@ -71,10 +71,13 @@ export const healthCheck = () => api.get('/health');
 export const aiSearch = (query, location = null) => api.post('/search', { query, location });
 export const getNearbyImages = (lat, lon, limit = 6) =>
   api.get(`/images?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&limit=${encodeURIComponent(limit)}`);
+export const getRouteImages = (coordinates = [], limit = 6) => api.post('/images/route', { coordinates, limit });
 export const aiChat = (message, context = {}) => api.post('/chat', { message, context });
 export const aiAnalyze = (context) => api.post('/ai/analyze', context);
 export const aiNavigationEvent = (eventData) => api.post('/ai/navigation-event', eventData);
 export const testGemini = () => api.post('/ai/test');
+export const saveAIMessage = (message) => api.post('/ai/save-message', message);
+export const getAIHistory = () => api.get('/ai/get-history');
 
 export const getTraffic = (params = {}) => api.get('/traffic', { params });
 export const saveTrafficPoints = (data) => api.post('/traffic', data);

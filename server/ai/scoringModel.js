@@ -21,6 +21,14 @@ const WEIGHT_PRESETS = {
     weather: 0.05,
     roadType: 0.10
   },
+  shortest: {
+    distance: 0.45,
+    time: 0.20,
+    traffic: 0.10,
+    cost: 0.05,
+    weather: 0.05,
+    roadType: 0.15
+  },
   cheapest: {
     distance: 0.15,
     time: 0.10,
@@ -44,6 +52,14 @@ const WEIGHT_PRESETS = {
     cost: 0.10,
     weather: 0.05,
     roadType: 0.25
+  },
+  avoid_highways: {
+    distance: 0.12,
+    time: 0.18,
+    traffic: 0.20,
+    cost: 0.05,
+    weather: 0.05,
+    roadType: 0.40
   }
 };
 
@@ -64,11 +80,15 @@ function getRoadTypeScore(roadTypes, preference) {
   switch (preference) {
     case 'fastest':
       return (100 - highway) / 100; // More highway = better
+    case 'shortest':
+      return (highway * 0.15 + urban * 0.25 + rural * 0.10) / 100;
     case 'scenic':
       return (100 - rural) / 100;   // More rural = better
     case 'cheapest':
     case 'avoid_tolls':
       return (highway * 0.5 + urban * 0.3) / 100; // Less highway = fewer tolls
+    case 'avoid_highways':
+      return (highway * 0.85 + urban * 0.1) / 100;
     default:
       return 0.5;
   }
@@ -100,13 +120,24 @@ export function scoreRoutes(routes, preference = 'fastest', weather = {}, depart
 
   // Extract raw features
   const distances = routes.map(r => r.distance);
-  const times = routes.map(r => r.duration * trafficMult);
+  const times = routes.map((route) => {
+    const adjustedDuration = Number(route.adjustedDuration);
+    if (Number.isFinite(adjustedDuration) && adjustedDuration > 0) {
+      return adjustedDuration;
+    }
+    return route.duration * trafficMult;
+  });
   const costs = routes.map(r => r.estimatedCost || 0);
+  const trafficScores = routes.map((route) => {
+    const score = Number(route.trafficScore);
+    return Number.isFinite(score) ? Math.max(0, Math.min(score, 100)) : 50;
+  });
 
   // Normalize features (0-1 scale)
   const normDist = normalize(distances);
   const normTime = normalize(times);
   const normCost = normalize(costs);
+  const normTraffic = normalize(trafficScores);
 
   // Weather penalty (same for all routes, but can vary by road type)
   const weatherPenalty = weather.condition ? getWeatherPenaltyValue(weather.condition) : 0;
@@ -115,17 +146,21 @@ export function scoreRoutes(routes, preference = 'fastest', weather = {}, depart
   const scores = routes.map((route, i) => {
     const roadScore = getRoadTypeScore(route.roadTypes || {}, preference);
     const tollPenalty = (preference === 'avoid_tolls' && route.hasTolls) ? 0.3 : 0;
-    const computedAdjustedDuration = Math.round(route.duration * trafficMult);
+    const highwayPenalty = preference === 'avoid_highways'
+      ? (route.roadTypes?.highway || 0) / 100 * 0.45
+      : 0;
+    const computedAdjustedDuration = Math.round(times[i]);
     const computedTrafficLevel = trafficMult > 1.3 ? 'heavy' : trafficMult > 1.1 ? 'moderate' : 'light';
 
     const score = (
       weights.distance * normDist[i] +
       weights.time * normTime[i] +
-      weights.traffic * (normTime[i] * (trafficMult - 0.8) / 0.7) +
+      weights.traffic * normTraffic[i] +
       weights.cost * normCost[i] +
       weights.weather * weatherPenalty +
       weights.roadType * roadScore +
-      tollPenalty
+      tollPenalty +
+      highwayPenalty
     );
 
     return {
@@ -140,7 +175,7 @@ export function scoreRoutes(routes, preference = 'fastest', weather = {}, depart
       scoreBreakdown: {
         distance: { value: normDist[i], weight: weights.distance, contribution: weights.distance * normDist[i] },
         time: { value: normTime[i], weight: weights.time, contribution: weights.time * normTime[i] },
-        traffic: { value: normTime[i] * (trafficMult - 0.8) / 0.7, weight: weights.traffic },
+        traffic: { value: normTraffic[i], weight: weights.traffic, contribution: weights.traffic * normTraffic[i] },
         cost: { value: normCost[i], weight: weights.cost, contribution: weights.cost * normCost[i] },
         weather: { value: weatherPenalty, weight: weights.weather },
         roadType: { value: roadScore, weight: weights.roadType, contribution: weights.roadType * roadScore }
@@ -182,7 +217,14 @@ function getWeatherPenaltyValue(condition) {
 function generateExplanation(scoredRoutes, preference, weather, trafficMult) {
   const best = scoredRoutes[0];
   const others = scoredRoutes.slice(1);
-  const prefLabel = { fastest: 'speed', cheapest: 'cost efficiency', scenic: 'scenic value', avoid_tolls: 'toll avoidance' };
+  const prefLabel = {
+    fastest: 'speed',
+    shortest: 'distance',
+    cheapest: 'cost efficiency',
+    scenic: 'scenic value',
+    avoid_tolls: 'toll avoidance',
+    avoid_highways: 'highway avoidance',
+  };
 
   let summary = `🏆 ${best.summary || 'Route ' + (best.index + 1)} selected as the best route, optimized for ${prefLabel[preference] || preference}. `;
 

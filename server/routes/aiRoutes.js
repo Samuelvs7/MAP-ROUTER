@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { searchWithSerpApi } from '../services/serpService.js';
-import { getNearbyMapillaryImages } from '../services/mapillaryService.js';
+import { getNearbyMapillaryImages, getRouteMapillaryImages } from '../services/mapillaryService.js';
 import { reverseGeocode } from '../services/geocodeService.js';
+import auth from '../middleware/auth.js';
+import { getAIChatHistory, saveAIChatMessage } from '../services/aiChatHistoryService.js';
 import {
   summarizeSearchResults,
   generateChatReply,
@@ -10,6 +12,33 @@ import {
 } from '../services/geminiService.js';
 
 const router = Router();
+const ROUTE_IMAGE_EVENTS = new Set(['route_selected', 'navigation_started']);
+
+function getRouteCoordinates(context = {}) {
+  const coordinates = context?.currentRoute?.geometry?.coordinates;
+  return Array.isArray(coordinates) ? coordinates : [];
+}
+
+async function getContextualImages({ lat, lon, context = {}, limit = 6 }) {
+  const routeCoordinates = getRouteCoordinates(context);
+
+  if (routeCoordinates.length > 1) {
+    return getRouteMapillaryImages({ coordinates: routeCoordinates, limit });
+  }
+
+  const parsedLat = Number(lat);
+  const parsedLon = Number(lon);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) {
+    return {
+      images: [],
+      source: 'fallback',
+      fallback: true,
+      error: 'lat and lon are required when route coordinates are unavailable',
+    };
+  }
+
+  return getNearbyMapillaryImages({ lat: parsedLat, lon: parsedLon, limit });
+}
 
 // â”€â”€â”€ Gemini API test â”€â”€â”€
 router.post('/ai/test', async (req, res) => {
@@ -105,6 +134,36 @@ router.get('/images', async (req, res) => {
   }
 });
 
+router.post('/images/route', async (req, res) => {
+  try {
+    const coordinates = Array.isArray(req.body?.coordinates) ? req.body.coordinates : [];
+    const limit = Number(req.body?.limit) || 6;
+
+    if (coordinates.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'At least 2 route coordinates are required',
+      });
+    }
+
+    const imagesPayload = await getRouteMapillaryImages({ coordinates, limit });
+
+    return res.json({
+      success: true,
+      images: imagesPayload.images || [],
+      sampledCoordinates: imagesPayload.sampledCoordinates || [],
+      source: imagesPayload.source || 'fallback',
+      fallback: Boolean(imagesPayload.fallback),
+      error: imagesPayload.error || null,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Route images request failed',
+    });
+  }
+});
+
 // ─── Existing: Chat ───
 router.post('/chat', async (req, res) => {
   try {
@@ -124,26 +183,35 @@ router.post('/chat', async (req, res) => {
     const wantsVisuals = /visual|picture|image|photo|street view|show me/i.test(message);
     let images = [];
     
-    // We run the AI reply generation and image fetch concurrently if needed
-    const tasks = [generateChatReply({ message, context })];
+    // We do image fetch first, and then AI reply generation sequentially
+    let processedMessage = message;
 
     const visualTarget = context.destination?.lat && context.destination?.lon
       ? context.destination
       : context.source;
+    const routeCoordinates = getRouteCoordinates(context);
 
-    if (wantsVisuals && visualTarget?.lat && visualTarget?.lon) {
-      tasks.push(getNearbyMapillaryImages({ 
-        lat: Number(visualTarget.lat), 
-        lon: Number(visualTarget.lon), 
-        limit: 4 
-      }));
+    if (wantsVisuals && ((visualTarget?.lat && visualTarget?.lon) || routeCoordinates.length > 1)) {
+      try {
+        const imagesResult = await getContextualImages({
+          lat: Number(visualTarget?.lat),
+          lon: Number(visualTarget?.lon),
+          context,
+          limit: 4,
+        });
+
+        if (imagesResult && imagesResult.images && imagesResult.images.length > 0) {
+          images = imagesResult.images;
+          processedMessage += ' [System note: Images were successfully fetched and are being displayed to the user right now. Respond acknowledging that you are showing the images.]';
+        } else {
+          processedMessage += ' [System note: I tried to fetch images for this location but there is no imagery coverage available. Please inform the user politely and focus on navigation assistance.]';
+        }
+      } catch (err) {
+        processedMessage += ' [System note: I tried to fetch images but encountered an error.]';
+      }
     }
 
-    const [reply, imagesResult] = await Promise.all(tasks);
-
-    if (imagesResult && imagesResult.images) {
-      images = imagesResult.images;
-    }
+    const reply = await generateChatReply({ message: processedMessage, context });
 
     return res.json({
       success: true,
@@ -192,13 +260,14 @@ router.post('/ai/navigation-event', async (req, res) => {
     const tasks = [generateIntelligentAnalysis({ event: eventType, ...context })];
 
     // Auto-fetch nearby images for location-relevant events
-    const shouldFetchImages = ['route_selected', 'navigation_started'].includes(eventType);
+    const shouldFetchImages = ROUTE_IMAGE_EVENTS.has(eventType);
     const parsedLat = Number(lat);
     const parsedLon = Number(lon);
     const hasCoords = Number.isFinite(parsedLat) && Number.isFinite(parsedLon);
+    const routeCoordinates = getRouteCoordinates(context);
 
-    if (shouldFetchImages && hasCoords) {
-      tasks.push(getNearbyMapillaryImages({ lat: parsedLat, lon: parsedLon, limit: 4 }));
+    if (shouldFetchImages && (hasCoords || routeCoordinates.length > 1)) {
+      tasks.push(getContextualImages({ lat: parsedLat, lon: parsedLon, context, limit: 4 }));
     } else {
       tasks.push(Promise.resolve(null));
     }
@@ -219,6 +288,37 @@ router.post('/ai/navigation-event', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: err.message || 'Navigation event processing failed',
+    });
+  }
+});
+
+router.post('/ai/save-message', auth, async (req, res) => {
+  try {
+    const savedMessage = await saveAIChatMessage(req.user._id, req.body || {});
+    return res.status(201).json({
+      success: true,
+      message: savedMessage,
+    });
+  } catch (err) {
+    const status = err.message === 'Message content is required' ? 400 : 500;
+    return res.status(status).json({
+      success: false,
+      error: err.message || 'Could not save AI message',
+    });
+  }
+});
+
+router.get('/ai/get-history', auth, async (req, res) => {
+  try {
+    const messages = await getAIChatHistory(req.user._id);
+    return res.json({
+      success: true,
+      messages,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Could not load AI history',
     });
   }
 });

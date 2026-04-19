@@ -43,6 +43,10 @@ export default function AISuggestionsPage() {
             messages={ai.messages}
             isThinking={ai.isThinking}
             pendingSuggestion={ai.pendingSuggestion}
+            imagesLoading={ai.imagesLoading}
+            imageError={ai.imageError}
+            historyLoading={ai.historyLoading}
+            historyError={ai.historyError}
             onSendMessage={ai.sendMessage}
             onAcceptSwitch={ai.acceptSuggestion}
             onDismissSwitch={ai.dismissSuggestion}
